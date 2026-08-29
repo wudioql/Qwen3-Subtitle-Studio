@@ -1,0 +1,45 @@
+"""core — 核心处理层
+
+包含模型生命周期管理、ASR 转写、强制对齐、音频 I/O 等推理逻辑。
+
+约束：**推理路径不得阻塞主线程**（必须走 workers/ 异步调度）；
+配置/常量/纯函数读取允许 ui 直连 core。
+"""
+
+from .constants import (
+    PROJECT_ROOT,
+    MODEL_DIR,
+    ASR_MODEL_PATH,
+    ALIGNER_MODEL_PATH,
+    KIM_VOCAL_MODEL_PATH,
+    MMS_ALIGNER_MODEL_PATH,
+    TEMP_DIR,
+    TEMP_MAX_AGE_DAYS,
+    LOG_MAX_BYTES,
+    DEFAULT_SAMPLE_RATE,
+    DEFAULT_CHANNELS,
+    ASR_MAX_DURATION,
+    ALIGNER_MAX_DURATION,
+    ALIGN_CHUNK_MAX_DURATION,
+    ALIGN_CHUNK_MIN_DURATION,
+    ALIGN_CHUNK_OVERLAP,
+)
+
+__all__ = [
+    "PROJECT_ROOT",
+    "MODEL_DIR",
+    "ASR_MODEL_PATH",
+    "ALIGNER_MODEL_PATH",
+    "KIM_VOCAL_MODEL_PATH",
+    "MMS_ALIGNER_MODEL_PATH",
+    "TEMP_DIR",
+    "TEMP_MAX_AGE_DAYS",
+    "LOG_MAX_BYTES",
+    "DEFAULT_SAMPLE_RATE",
+    "DEFAULT_CHANNELS",
+    "ASR_MAX_DURATION",
+    "ALIGNER_MAX_DURATION",
+    "ALIGN_CHUNK_MAX_DURATION",
+    "ALIGN_CHUNK_MIN_DURATION",
+    "ALIGN_CHUNK_OVERLAP",
+]

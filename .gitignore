@@ -1,0 +1,62 @@
+# ── Python ───────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── 虚拟环境 ─────────────────────────────────
+.venv/
+venv/
+env/
+
+# ── 模型权重（5.2GB，绝不入库）─────────────────
+models/
+*.safetensors
+*.bin
+*.gguf
+
+# ── 用户运行态偏好（代码即模板，load_preferences 自建）──
+.config/
+
+# ── 运行时 DLL / 临时文件 ─────────────────────
+libmpv-2.dll
+*.whl
+.temp/
+*.tmp
+*.wav
+*.mp4
+*.mkv
+*.mov
+*.avi
+*.webm
+*.flv
+*.wmv
+*.m4v
+
+# ── 测试媒体与工程（按需保留时手动 git add -f）─────
+test-*.mp4
+test-*.srt
+test-*.txt
+test-*.ass
+test-*.json
+
+# ── IDE ──────────────────────────────────────
+.idea/
+.vscode/
+*.iml
+
+# ── OS ───────────────────────────────────────
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ── 历史压缩封装 ───────────────────────────────
+Qwen3-Subtitle-Studio*.txt
+
+
+# ── 打包产物 ─────────────────────────────────
+build/
+dist/
+*.spec

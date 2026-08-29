@@ -1,0 +1,5 @@
+# 开发/门禁依赖；先按 DEPLOYMENT.md 安装目标 Torch/flash-attn，再安装 runtime + 本文件。
+-r requirements.txt
+
+pytest>=9.0,<10
+ruff==0.12.12
