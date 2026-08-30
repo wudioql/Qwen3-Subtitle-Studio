@@ -21,6 +21,12 @@
 - 将上述本机验证结果与 Linux/无权重沙箱的验证边界分开记录。
 - 明确硬字幕烧录和 Nuitka 分发目前没有规划、排期或验收标准，不再把它们标成当前待办或已排期项。
 
+### Fixed
+
+- 修复 CI Ruff 对 `tests/test_punctuation.py` 的未使用导入/变量，以及 `tests/test_subtitle_overlay.py` 中装饰字符回归代码作用域错误的报告。
+- 修复 Qt 预览回归测试中临时 `QImage` 像素 buffer 比较和平台字体度量导致的脆弱断言。
+- GitHub Actions 更新到 Node 24 运行时的 `actions/checkout@v7` 与 `actions/setup-python@v7`，消除旧 Node 20 兼容性警告。
+
 ### Removed
 
 - 删除已完成迁移、且不再作为现役真源的三个中文历史文档；内容以根目录标准文档为准。

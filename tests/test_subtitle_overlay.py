@@ -251,6 +251,10 @@ def _case_selected_template_preview_changes_rendered_frame():
         painter.end()
         return image
 
+    def pixels(image: QImage) -> bytes:
+        """保留 QImage 所有权后再复制像素，避免临时对象释放导致悬空 buffer。"""
+        return image.constBits().tobytes()
+
     def bounds(image: QImage) -> tuple[int, int, int, int]:
         raw = np.frombuffer(image.constBits(), dtype=np.uint8).reshape(
             image.height(), image.bytesPerLine()
@@ -264,23 +268,25 @@ def _case_selected_template_preview_changes_rendered_frame():
     base_image = render("karaoke", None)
     tpl_bounds = bounds(template_image)
     base_bounds = bounds(base_image)
-    assert template_image.constBits().tobytes() != base_image.constBits().tobytes()
-    assert tpl_bounds[2] - tpl_bounds[0] > base_bounds[2] - base_bounds[0]  # 中点确实放大
+    assert pixels(template_image) != pixels(base_image)
+    assert tpl_bounds[3] - tpl_bounds[1] > base_bounds[3] - base_bounds[1]  # 中点确实放大
     assert tpl_bounds[1] > 180  # use_pos=True 时保持 ASS 底部对齐，不被模板 anchor=5 拉到正中
     assert _template_scale_factor(116, 0.0) == 1.0
     assert _template_scale_factor(116, 0.5) > 1.0
     assert _template_scale_factor(116, 1.0) == 1.0
 
     # 第五档跟随 k-tag：\k 瞬变与 \kf 半程扫过应产生不同像素。
-    assert render("karaoke", None, "k").constBits().tobytes() != render(
-        "karaoke", None, "kf"
-    ).constBits().tobytes()
+    k_image = render("karaoke", None, "k")
+    kf_image = render("karaoke", None, "kf")
+    assert pixels(k_image) != pixels(kf_image)
 
     # 第六档只画 Apply 后的模板 fx。原 k-tag 在成品文件中属于 Comment，
     # 因此切换 k/kf/K/ko 不得改变模板预览像素，更不能强制叠加半程扫过。
-    template_pixels = render("karaoke_template", template, "kf").constBits().tobytes()
+    template_image = render("karaoke_template", template, "kf")
+    template_pixels = pixels(template_image)
     for mode in ("K", "k", "ko"):
-        assert render("karaoke_template", template, mode).constBits().tobytes() == template_pixels
+        mode_image = render("karaoke_template", template, mode)
+        assert pixels(mode_image) == template_pixels
 
 
 @pytest.mark.ui
