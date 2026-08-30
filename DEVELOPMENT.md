@@ -114,7 +114,7 @@ python main.py
 
 ## 7. CI 与发布边界
 
-`.github/workflows/quality.yml` 当前只提供 Ubuntu Linux + Python 3.12 + CPU Torch 的 Ruff/pytest 门禁，并安装 Qt 离屏运行库。它不覆盖：
+`.github/workflows/quality.yml` 当前只提供 Ubuntu Linux + Python 3.12 + CPU Torch 的 Ruff/pytest 门禁，并安装 Qt 离屏运行库（`libxkbcommon0`、`libegl1`、`libpulse0`）。它不覆盖：
 
 - Windows 原生窗口和 Qt Multimedia；
 - CUDA/Flash Attention；

@@ -15,7 +15,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Qt runtime libraries
-        run: sudo apt-get update && sudo apt-get install -y libxkbcommon0 libegl1
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon0 libegl1 libpulse0
       - name: Install target-compatible CPU test stack
         run: |
           python -m pip install --upgrade pip

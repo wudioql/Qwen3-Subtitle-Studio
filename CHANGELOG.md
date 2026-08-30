@@ -26,6 +26,7 @@
 - 修复 CI Ruff 对 `tests/test_punctuation.py` 的未使用导入/变量，以及 `tests/test_subtitle_overlay.py` 中装饰字符回归代码作用域错误的报告。
 - 修复 Qt 预览回归测试中临时 `QImage` 像素 buffer 比较和平台字体度量导致的脆弱断言。
 - GitHub Actions 更新到 Node 24 运行时的 `actions/checkout@v7` 与 `actions/setup-python@v7`，消除旧 Node 20 兼容性警告。
+- Ubuntu CI 补充 Qt Multimedia 所需的 `libpulse0`，修复 `QVideoFrame` 导入时缺少 `libpulse.so.0` 导致的 Pytest 失败。
 
 ### Removed
 
