@@ -27,6 +27,7 @@
 - 修复 Qt 预览回归测试中临时 `QImage` 像素 buffer 比较和平台字体度量导致的脆弱断言。
 - GitHub Actions 更新到 Node 24 运行时的 `actions/checkout@v7` 与 `actions/setup-python@v7`，消除旧 Node 20 兼容性警告。
 - Ubuntu CI 补充 Qt Multimedia 所需的 `libpulse0`，修复 `QVideoFrame` 导入时缺少 `libpulse.so.0` 导致的 Pytest 失败。
+- 将四个小型项目 E2E/模板参考夹具从通用忽略规则中排除，确保 GitHub Actions checkout 后能读取测试所需的根目录资源。
 
 ### Removed
 

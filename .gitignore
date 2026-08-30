@@ -35,12 +35,17 @@ libmpv-2.dll
 *.wmv
 *.m4v
 
-# ── 测试媒体与工程（按需保留时手动 git add -f）─────
+# ── 测试媒体与工程 ───────────────────────────────
 test-*.mp4
 test-*.srt
 test-*.txt
 test-*.ass
 test-*.json
+# 这四个小型 E2E 参考夹具由项目生成，但必须随仓库提供给 CI。
+!test-short-talk.mp4
+!test-short-talk.txt
+!test-short-talk.ass
+!test-short-talk.qss.json
 
 # ── IDE ──────────────────────────────────────
 .idea/
@@ -55,7 +60,6 @@ desktop.ini
 
 # ── 历史压缩封装 ───────────────────────────────
 Qwen3-Subtitle-Studio*.txt
-
 
 # ── 打包产物 ─────────────────────────────────
 build/

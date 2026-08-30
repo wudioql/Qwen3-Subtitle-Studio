@@ -39,6 +39,8 @@ assets/       应用图标
 
 `tests/_env.py` 是测试环境三件套的唯一实现；`tests/conftest.py` 和 `tests/_bootstrap.py` 只负责在 pytest/直跑场景调用它。测试会隔离 `QSS_CONFIG_DIR`、`QSS_TEMP_DIR`，并默认设置 Qt offscreen 与 `QSS_DISABLE_MPV=1`。
 
+根目录的 `test-short-talk.mp4`、`test-short-talk.txt`、`test-short-talk.ass` 和 `test-short-talk.qss.json` 是小型、可复现的项目 E2E/模板参考夹具；`.gitignore` 对它们有明确例外，必须随仓库提供给 CI。它们证明项目链路与导出结构，不是独立外部数据集基准。
+
 ## 3. 测试分层
 
 | 命令 | 证明什么 | 不证明什么 |

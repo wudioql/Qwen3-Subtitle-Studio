@@ -1,0 +1,752 @@
+{
+  "audio_path": ".temp/test-short-talk_243325_1774039004558172700__sr16000_ch1.wav",
+  "source_media_path": "test-short-talk.mp4",
+  "video_path": "test-short-talk.mp4",
+  "media_duration": 13.759875,
+  "sentences": [
+    {
+      "text": "青瓷色的风掠过指尖，",
+      "start_time": 0.48,
+      "end_time": 2.32,
+      "words": [
+        {
+          "text": "青",
+          "start_time": 0.48,
+          "end_time": 0.72,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "瓷",
+          "start_time": 0.72,
+          "end_time": 0.88,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "色",
+          "start_time": 0.88,
+          "end_time": 1.04,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "的",
+          "start_time": 1.04,
+          "end_time": 1.12,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "风",
+          "start_time": 1.12,
+          "end_time": 1.44,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "掠",
+          "start_time": 1.44,
+          "end_time": 1.6,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "过",
+          "start_time": 1.6,
+          "end_time": 1.76,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "指",
+          "start_time": 1.76,
+          "end_time": 2.0,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "尖",
+          "start_time": 2.0,
+          "end_time": 2.32,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "，",
+          "start_time": 2.32,
+          "end_time": 2.32,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": true
+        }
+      ],
+      "language": "Chinese",
+      "speaker": "",
+      "ass_style": "",
+      "ass_extra_tags": "",
+      "is_dirty": false,
+      "is_locked": false,
+      "sid": 7,
+      "timed": true
+    },
+    {
+      "text": "金线牡丹在呼吸间流转。",
+      "start_time": 3.02,
+      "end_time": 5.26,
+      "words": [
+        {
+          "text": "金",
+          "start_time": 3.02,
+          "end_time": 3.24,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "线",
+          "start_time": 3.24,
+          "end_time": 3.46,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "牡",
+          "start_time": 3.46,
+          "end_time": 3.62,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "丹",
+          "start_time": 3.62,
+          "end_time": 3.88,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "-",
+          "start_time": 3.88,
+          "end_time": 4.1,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": true
+        },
+        {
+          "text": "在",
+          "start_time": 4.1,
+          "end_time": 4.32,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "呼",
+          "start_time": 4.32,
+          "end_time": 4.48,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "吸",
+          "start_time": 4.48,
+          "end_time": 4.64,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "间",
+          "start_time": 4.64,
+          "end_time": 4.82,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "流",
+          "start_time": 4.82,
+          "end_time": 5.04,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "转",
+          "start_time": 5.04,
+          "end_time": 5.26,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "。",
+          "start_time": 5.26,
+          "end_time": 5.26,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": true
+        }
+      ],
+      "language": "Chinese",
+      "speaker": "",
+      "ass_style": "",
+      "ass_extra_tags": "",
+      "is_dirty": false,
+      "is_locked": false,
+      "sid": 8,
+      "timed": true
+    },
+    {
+      "text": "墨香未干，",
+      "start_time": 6.08,
+      "end_time": 7.04,
+      "words": [
+        {
+          "text": "墨",
+          "start_time": 6.08,
+          "end_time": 6.24,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "香",
+          "start_time": 6.24,
+          "end_time": 6.56,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "未",
+          "start_time": 6.56,
+          "end_time": 6.72,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "干",
+          "start_time": 6.72,
+          "end_time": 7.04,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "，",
+          "start_time": 7.04,
+          "end_time": 7.04,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": true
+        }
+      ],
+      "language": "Chinese",
+      "speaker": "",
+      "ass_style": "",
+      "ass_extra_tags": "",
+      "is_dirty": false,
+      "is_locked": false,
+      "sid": 9,
+      "timed": true
+    },
+    {
+      "text": "茶烟已绕过雕花窗。",
+      "start_time": 7.6,
+      "end_time": 9.36,
+      "words": [
+        {
+          "text": "茶",
+          "start_time": 7.6,
+          "end_time": 7.92,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "烟",
+          "start_time": 7.92,
+          "end_time": 8.16,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "已",
+          "start_time": 8.16,
+          "end_time": 8.24,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "绕",
+          "start_time": 8.24,
+          "end_time": 8.48,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "过",
+          "start_time": 8.48,
+          "end_time": 8.56,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "雕",
+          "start_time": 8.56,
+          "end_time": 8.8,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "花",
+          "start_time": 8.8,
+          "end_time": 8.96,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "窗",
+          "start_time": 8.96,
+          "end_time": 9.36,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "。",
+          "start_time": 9.36,
+          "end_time": 9.36,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": true
+        }
+      ],
+      "language": "Chinese",
+      "speaker": "",
+      "ass_style": "",
+      "ass_extra_tags": "",
+      "is_dirty": false,
+      "is_locked": false,
+      "sid": 10,
+      "timed": true
+    },
+    {
+      "text": "今夜的月色，",
+      "start_time": 10.24,
+      "end_time": 11.36,
+      "words": [
+        {
+          "text": "今",
+          "start_time": 10.24,
+          "end_time": 10.48,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "夜",
+          "start_time": 10.48,
+          "end_time": 10.56,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "的",
+          "start_time": 10.56,
+          "end_time": 10.72,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "月",
+          "start_time": 10.72,
+          "end_time": 10.88,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "色",
+          "start_time": 10.88,
+          "end_time": 11.36,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "，",
+          "start_time": 11.36,
+          "end_time": 11.36,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": true
+        }
+      ],
+      "language": "Chinese",
+      "speaker": "",
+      "ass_style": "",
+      "ass_extra_tags": "",
+      "is_dirty": false,
+      "is_locked": false,
+      "sid": 11,
+      "timed": true
+    },
+    {
+      "text": "可愿与我共裁一段流光？",
+      "start_time": 11.68,
+      "end_time": 13.52,
+      "words": [
+        {
+          "text": "可",
+          "start_time": 11.68,
+          "end_time": 11.84,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "愿",
+          "start_time": 11.84,
+          "end_time": 12.08,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "与",
+          "start_time": 12.08,
+          "end_time": 12.32,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "我",
+          "start_time": 12.32,
+          "end_time": 12.4,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "共",
+          "start_time": 12.4,
+          "end_time": 12.56,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "裁",
+          "start_time": 12.56,
+          "end_time": 12.8,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "一",
+          "start_time": 12.8,
+          "end_time": 12.88,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "段",
+          "start_time": 12.88,
+          "end_time": 13.04,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "流",
+          "start_time": 13.04,
+          "end_time": 13.2,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "光",
+          "start_time": 13.2,
+          "end_time": 13.52,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": false
+        },
+        {
+          "text": "？",
+          "start_time": 13.52,
+          "end_time": 13.52,
+          "language": "Chinese",
+          "speaker": "",
+          "is_punct": true
+        }
+      ],
+      "language": "Chinese",
+      "speaker": "",
+      "ass_style": "",
+      "ass_extra_tags": "",
+      "is_dirty": false,
+      "is_locked": false,
+      "sid": 12,
+      "timed": true
+    }
+  ],
+  "sample_rate": 16000,
+  "source_language": "zh",
+  "created_at": 1787146117.8247077,
+  "ass_style_data": {
+    "name": "Default",
+    "font_name": "江城圆体 500W",
+    "font_size": 60.0,
+    "primary_color": "#FFFFFF",
+    "secondary_color": "#0000FF",
+    "outline_color": "#000000",
+    "back_color": "#000000",
+    "primary_alpha": 0,
+    "outline_alpha": 0,
+    "back_alpha": 128,
+    "bold": false,
+    "italic": false,
+    "underline": false,
+    "strikeout": false,
+    "scale_x": 100.0,
+    "scale_y": 100.0,
+    "spacing": 0.0,
+    "angle": 0.0,
+    "border_style": 1,
+    "outline": 3.0,
+    "shadow": 2.0,
+    "alignment": 2,
+    "margin_l": 120,
+    "margin_r": 120,
+    "margin_v": 60,
+    "encoding": 1,
+    "play_res_x": 1920,
+    "play_res_y": 1080,
+    "wrap_style": 2
+  },
+  "karaoke_template_data": {
+    "templates": [
+      {
+        "enabled": false,
+        "name": "弹跳放大",
+        "mode": "form",
+        "template_class": "syl",
+        "modifiers": [
+          "all"
+        ],
+        "layer": 0,
+        "style_name": "Default",
+        "anchor": 5,
+        "use_pos": true,
+        "fad_in_ms": 80,
+        "fad_out_ms": 80,
+        "scale_enabled": true,
+        "scale_percent": 116,
+        "color_enabled": false,
+        "color_highlight": "#FFD54F",
+        "color_restore": "#FFFFFF",
+        "glow_enabled": false,
+        "glow_bord": 4.0,
+        "glow_blur": 2.0,
+        "extra_tags": "",
+        "raw_text": ""
+      },
+      {
+        "enabled": true,
+        "name": "弹跳放大+高亮+描边",
+        "mode": "form",
+        "template_class": "syl",
+        "modifiers": [
+          "all"
+        ],
+        "layer": 0,
+        "style_name": "Default",
+        "anchor": 5,
+        "use_pos": true,
+        "fad_in_ms": 80,
+        "fad_out_ms": 80,
+        "scale_enabled": true,
+        "scale_percent": 116,
+        "color_enabled": true,
+        "color_highlight": "#FFD54F",
+        "color_restore": "#FFFFFF",
+        "glow_enabled": true,
+        "glow_bord": 4.0,
+        "glow_blur": 2.0,
+        "extra_tags": "",
+        "raw_text": ""
+      },
+      {
+        "enabled": false,
+        "name": "高亮变色",
+        "mode": "form",
+        "template_class": "syl",
+        "modifiers": [
+          "all"
+        ],
+        "layer": 0,
+        "style_name": "Default",
+        "anchor": 5,
+        "use_pos": true,
+        "fad_in_ms": 80,
+        "fad_out_ms": 80,
+        "scale_enabled": false,
+        "scale_percent": 116,
+        "color_enabled": true,
+        "color_highlight": "#FFD54F",
+        "color_restore": "#FFFFFF",
+        "glow_enabled": false,
+        "glow_bord": 4.0,
+        "glow_blur": 2.0,
+        "extra_tags": "",
+        "raw_text": ""
+      },
+      {
+        "enabled": false,
+        "name": "描边发光",
+        "mode": "form",
+        "template_class": "syl",
+        "modifiers": [
+          "all"
+        ],
+        "layer": 0,
+        "style_name": "Default",
+        "anchor": 5,
+        "use_pos": true,
+        "fad_in_ms": 80,
+        "fad_out_ms": 80,
+        "scale_enabled": false,
+        "scale_percent": 116,
+        "color_enabled": false,
+        "color_highlight": "#FFD54F",
+        "color_restore": "#FFFFFF",
+        "glow_enabled": true,
+        "glow_bord": 4.0,
+        "glow_blur": 2.0,
+        "extra_tags": "",
+        "raw_text": ""
+      },
+      {
+        "enabled": false,
+        "name": "逐字浮现",
+        "mode": "form",
+        "template_class": "syl",
+        "modifiers": [
+          "all"
+        ],
+        "layer": 0,
+        "style_name": "Default",
+        "anchor": 5,
+        "use_pos": true,
+        "fad_in_ms": 0,
+        "fad_out_ms": 0,
+        "scale_enabled": false,
+        "scale_percent": 116,
+        "color_enabled": false,
+        "color_highlight": "#FFD54F",
+        "color_restore": "#FFFFFF",
+        "glow_enabled": false,
+        "glow_bord": 4.0,
+        "glow_blur": 2.0,
+        "extra_tags": "\\alpha&HFF&\\t($start,!$start+120!,\\alpha&H00&)",
+        "raw_text": ""
+      },
+      {
+        "enabled": false,
+        "name": "上浮入场",
+        "mode": "form",
+        "template_class": "syl",
+        "modifiers": [
+          "all"
+        ],
+        "layer": 0,
+        "style_name": "Default",
+        "anchor": 5,
+        "use_pos": false,
+        "fad_in_ms": 0,
+        "fad_out_ms": 0,
+        "scale_enabled": false,
+        "scale_percent": 116,
+        "color_enabled": false,
+        "color_highlight": "#FFD54F",
+        "color_restore": "#FFFFFF",
+        "glow_enabled": false,
+        "glow_bord": 4.0,
+        "glow_blur": 2.0,
+        "extra_tags": "\\move($scenter,!$smiddle+14!,$scenter,$smiddle,$start,$mid)",
+        "raw_text": ""
+      },
+      {
+        "enabled": false,
+        "name": "整句淡入",
+        "mode": "form",
+        "template_class": "line",
+        "modifiers": [
+          "all"
+        ],
+        "layer": 0,
+        "style_name": "Default",
+        "anchor": 5,
+        "use_pos": true,
+        "fad_in_ms": 200,
+        "fad_out_ms": 200,
+        "scale_enabled": false,
+        "scale_percent": 116,
+        "color_enabled": false,
+        "color_highlight": "#FFD54F",
+        "color_restore": "#FFFFFF",
+        "glow_enabled": false,
+        "glow_bord": 4.0,
+        "glow_blur": 2.0,
+        "extra_tags": "",
+        "raw_text": ""
+      }
+    ]
+  },
+  "export_settings": {
+    "k_tag_mode": "K",
+    "word_style": {
+      "bold": true,
+      "italic": false,
+      "underline": true,
+      "strike": false,
+      "ass_extra": "",
+      "ass_highlight_color": "#FFD54F"
+    }
+  },
+  "schema_version": 1,
+  "media_path_hints": {
+    "source_media_path": "D:\\AI-tools\\Qwen3-Subtitle-Studio\\test-short-talk.mp4",
+    "audio_path": "D:\\AI-tools\\Qwen3-Subtitle-Studio\\.temp\\test-short-talk_243325_1774039004558172700__sr16000_ch1.wav",
+    "video_path": "D:\\AI-tools\\Qwen3-Subtitle-Studio\\test-short-talk.mp4"
+  }
+}
