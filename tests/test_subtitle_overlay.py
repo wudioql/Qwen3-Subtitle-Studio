@@ -89,6 +89,25 @@ def _case_segments_word_states_and_punct():
     assert any("♪" in segment.text for segment in decorated)
     assert any("♫" in segment.text for segment in decorated)
 
+    # 特殊装饰字符（♪ ♫）应保留可见文本，但在 karaoke 模式下不应继承 current 状态
+    # 和扫过进度（应与标点行为一致：不参与逐字动效）
+    segs_decoration = compute_overlay_segments(music, 0.25, "karaoke")
+    # 装饰字符（♪ 和 ♫）应存在于结果中，但不应有 progress 值表示扫过
+    decoration_segs = [s for s in segs_decoration if s.text in ("♪", "♫")]
+    assert len(decoration_segs) == 2, f"装饰字符应保留在预览中，实际得到：{[(s.text, s.state, s.progress) for s in segs_decoration]}"
+    # 装饰字符不应继承 current 的扫过进度（应为 0.0 或 1.0，不为中间值）
+    for dec in decoration_segs:
+        assert dec.progress in (0.0, 1.0), f"装饰字符 {dec.text!r} 不应有中间扫过进度，实际：{dec.progress}"
+        # 装饰字符不应被标记为 current（因为没有独立逐字动效）
+        assert dec.state != "current", f"装饰字符 {dec.text!r} 不应继承 current 状态"
+
+    # 在 karaoke_template 模式下，装饰字符同样不应获得模板动画（缩放、颜色变化）
+    segs_tpl_decoration = compute_overlay_segments(music, 0.25, "karaoke_template")
+    decoration_tpl = [s for s in segs_tpl_decoration if s.text in ("♪", "♫")]
+    for dec in decoration_tpl:
+        assert dec.is_punct is True or dec.state in ("plain", "upcoming", "sung"), \
+            f"装饰字符在模板模式下应无动画状态，实际：{dec.state}"
+
 
 def _case_segments_karaoke_progress():
     from ui.subtitle_overlay import compute_overlay_segments
@@ -268,26 +287,6 @@ def _case_selected_template_preview_changes_rendered_frame():
 def _case_player_panel_preview_pack():
     """播放面板契约：六档下拉与持久化 / 画面层切换 / 模板与 k-tag 接线。"""
     _case_player_panel_contract()
-
-
-    # 特殊装饰字符（♪ ♫）应保留可见文本，但在 karaoke 模式下不应继承 current 状态
-    # 和扫过进度（应与标点行为一致：不参与逐字动效）
-    segs_decoration = compute_overlay_segments(music, 0.25, "karaoke")
-    # 装饰字符（♪ 和 ♫）应存在于结果中，但不应有 progress 值表示扫过
-    decoration_segs = [s for s in segs_decoration if s.text in ("♪", "♫")]
-    assert len(decoration_segs) == 2, f"装饰字符应保留在预览中，实际得到：{[(s.text, s.state, s.progress) for s in segs_decoration]}"
-    # 装饰字符不应继承 current 的扫过进度（应为 0.0 或 1.0，不为中间值）
-    for dec in decoration_segs:
-        assert dec.progress in (0.0, 1.0), f"装饰字符 {dec.text!r} 不应有中间扫过进度，实际：{dec.progress}"
-        # 装饰字符不应被标记为 current（因为没有独立逐字动效）
-        assert dec.state != "current", f"装饰字符 {dec.text!r} 不应继承 current 状态"
-
-    # 在 karaoke_template 模式下，装饰字符同样不应获得模板动画（缩放、颜色变化）
-    segs_tpl_decoration = compute_overlay_segments(music, 0.25, "karaoke_template")
-    decoration_tpl = [s for s in segs_tpl_decoration if s.text in ("♪", "♫")]
-    for dec in decoration_tpl:
-        assert dec.is_punct is True or dec.state in ("plain", "upcoming", "sung"), \
-            f"装饰字符在模板模式下应无动画状态，实际：{dec.state}"
 
 
 def test_subtitle_overlay_pack():

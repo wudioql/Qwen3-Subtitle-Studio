@@ -254,7 +254,7 @@ def _case_punct_timestamps_monotonic_and_no_overlap():
 
 def _case_decoration_symbols_no_karaoke_effect():
     """特殊装饰字符（♪ ♫ ♬ ♩ #）不应拥有卡拉OK效果（与标点行为一致）。"""
-    from subs.converter import _DECORATION_SYMBOLS, _filter_animation_words
+    from subs.converter import _filter_animation_words
     # 装饰字符应被过滤（不参与逐字动效）
     decoration_words = [
         WordTimestamp(text="♪", start_time=0.0, end_time=0.1),
@@ -271,7 +271,6 @@ def _case_decoration_symbols_no_karaoke_effect():
         assert _is_punct_only(sym) is True, f"装饰字符 {sym!r} 应被识别为不参与动效"
 
     # 测试包含装饰字符的句子：装饰字符应被过滤，不获得逐字高亮
-    text_with_decoration = "♪你好♫"
     words_with_decoration = [
         WordTimestamp(text="♪", start_time=0.0, end_time=0.1, is_punct=False),
         WordTimestamp(text="你", start_time=0.1, end_time=0.3),
