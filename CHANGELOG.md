@@ -13,7 +13,7 @@
 
 ### Added
 
-- **云端 ASR 后端（SiliconFlow）**：工具栏「识别后端」可切 `local`/`cloud`。云端只负责出文本，字级时间戳仍由本地强制对齐器产出，因此切换后端不改变时间轴精度；本地 1.7B 不进显存。新增 `core/cloud_asr.py`、`core/cloud_models.py`、设置页「云端 ASR」分区（API Key / Base URL / 模型 / 编码 / 零成本探活 / 用量台账）。
+- **云端 ASR 后端（SiliconFlow）**：工具栏「识别后端」可切 `local`/`cloud`。云端只负责出文本，字级时间戳仍由本地强制对齐器产出，因此切换后端不改变时间轴精度；本地 1.7B 不进显存。新增云端 ASR 客户端 `core/cloud_asr/`（本快照内由单文件拆成包，见 Changed）、云端模型清单 `core/cloud_models.py`、设置页「云端 ASR」分区（API Key / Base URL / 模型 / 编码 / 零成本探活 / 用量台账）。
 - 云端模型清单带**账单实证徽标**（已实证免费 / 已知收费 / 未实测），三方名单冲突时以账本为准。
 
 ### Changed
