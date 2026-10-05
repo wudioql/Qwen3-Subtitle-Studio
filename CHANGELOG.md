@@ -4,24 +4,20 @@
 
 ## [Unreleased]
 
+### Unplanned
+
+- 硬字幕烧录及其 UI。
+- Nuitka 便携分发、安装包和对应 SBOM 流程。
+
+## [2026-10-05] — 云端 ASR 接入与测试收尾
+
 ### Added
 
-- 标准化的项目文档入口：架构、Python/数据 API、贡献、部署、开发、故障排查和变更记录。
-- 文档状态分级：`verified-current`、`implemented-pending`、`unplanned`、`historical`。
 - **云端 ASR 后端（SiliconFlow）**：工具栏「识别后端」可切 `local`/`cloud`。云端只负责出文本，字级时间戳仍由本地强制对齐器产出，因此切换后端不改变时间轴精度；本地 1.7B 不进显存。新增 `core/cloud_asr.py`、`core/cloud_models.py`、设置页「云端 ASR」分区（API Key / Base URL / 模型 / 编码 / 零成本探活 / 用量台账）。
 - 云端模型清单带**账单实证徽标**（已实证免费 / 已知收费 / 未实测），三方名单冲突时以账本为准。
 
-### Verified
-
-- 用户确认本机完整 ASR/对齐 E2E 正常；由于根目录三件参考资源由本项目生成，该结果证明项目自身链路自洽，不是独立外部数据集精度基准。
-- 用户确认本机 `libmpv` 测试通过并可正常使用。
-- 用户确认各类字幕文件在 Aegisub、mpv.net 中实际测试均支持。
-- 用户确认 PotPlayer 除 `\kf` 无法逐字扫过、只能整字亮外，其他字幕均正常。
-
 ### Changed
 
-- 将上述本机验证结果与 Linux/无权重沙箱的验证边界分开记录。
-- 明确硬字幕烧录和 Nuitka 分发目前没有规划、排期或验收标准，不再把它们标成当前待办或已排期项。
 - 同一云端域的模块命名统一到 `cloud_` 前缀：`core/sf_models.py` → `core/cloud_models.py`、`tools/sf_free_models.py` → `tools/cloud_models_cli.py`（原名只提「免费模型」，实际按 UI 口径输出**全部** ASR 候选并带实证徽标，名不副实）。缓存文件随之改为 `.config/cloud_models.json`，旧名文件失效后首次启动会重新抓取一次定价页（只 GET 静态页，零费用）。
 - ASR 引擎拆包：`core/asr_engine.py`（1208 行）→ `core/asr_engine/`，子模块 `config`（转写配置）/ `splitting`（切句文本层）/ `sentences`（文本或片段 → Sentence 列表）/ `pipeline`（主流程），依赖单向（config、splitting ← sentences ← pipeline），包入口只再导出。（语言短名不在 `config`，单一真源是 `core/language_utils.py`。）`transcribe` / `TranscribeConfig` / `_words_to_sentences` / `_split_text_by_punct` / `_attach_words_to_sentences` 等旧路径全部不变。同轮把三处 monkeypatch 目标从包入口改到 `core.asr_engine.pipeline`——`prepare_audio` / `align_full_text` 是在 `transcribe` 所在模块内解析的，打在包上不生效。
 - 云端 ASR 客户端拆包：`core/cloud_asr.py`（1138 行，文件里本就用 `═══` 分好 7 段）→ `core/cloud_asr/`，子模块 `consts`/`facts`/`errors`/`types`/`language`/`encoding`/`client`，包入口只做再导出，`__all__` 与全部公开名不变（`from core.cloud_asr import transcribe_cloud` 原样可用）。同轮修掉测试里两处「哑弹」补丁：`test_cloud_asr.py` 打的 `ca.time.perf_counter` 从未被调用过（`transcribe_cloud` 只读 `time.strftime`）已删；`ca._http_post` / `ca.encode_for_upload` 改打在真正查找它们的 `core.cloud_asr.client` 上——打在包命名空间不生效，会让用例真的去发 HTTP。
@@ -38,11 +34,6 @@
 
 ### Fixed
 
-- 修复 CI Ruff 对 `tests/test_punctuation.py` 的未使用导入/变量，以及 `tests/test_subtitle_overlay.py` 中装饰字符回归代码作用域错误的报告。
-- 修复 Qt 预览回归测试中临时 `QImage` 像素 buffer 比较和平台字体度量导致的脆弱断言。
-- GitHub Actions 更新到 Node 24 运行时的 `actions/checkout@v7` 与 `actions/setup-python@v7`，消除旧 Node 20 兼容性警告。
-- Ubuntu CI 补充 Qt Multimedia 所需的 `libpulse0`，修复 `QVideoFrame` 导入时缺少 `libpulse.so.0` 导致的 Pytest 失败。
-- 将四个小型项目 E2E/模板参考夹具从通用忽略规则中排除，确保 GitHub Actions checkout 后能读取测试所需的根目录资源。
 - **对齐阶段进度不再冻结**：ASR 主流程原先丢弃对齐器 `total=0` 的不确定进度，UI 长时间停在「激活对齐器...」；现在原样转发文案（仍不伪造百分比）。
 - **重对齐/脏句对齐不再顺带改写无关句**：`apply_seam_snaps` 此前未限定范围，会改动锁定句与本轮未参与句的时间轴；现按本轮成功提交的 sid 限定（与全文对齐一致）。
 - **MMS 上下文泄漏**：`align_sentence` 手写 `__enter__()` 在 `try` 之外，异常时 ONNX Session 不再销毁且嵌套深度永久偏移；已移入 `try`。
@@ -51,15 +42,40 @@
 
 ### Removed
 
-- 删除已完成迁移、且不再作为现役真源的三个中文历史文档；内容以根目录标准文档为准。
 - 删除 `core/ort_session.py` 兼容 façade（全仓无生产 import，生产侧一律走 `core/ort_cuda.py`）及其 3 个测试用例。
 - 删除死类 `ui/player/subtitle_overlay.py::SubtitleOverlay`（已被 `player/stage` 的 `_VideoSubtitleStage` 取代，零引用）。
 - 清理零引用符号：`cloud_asr.MAX_AUDIO_DURATION_SEC`、`free_model_ids()`、`cloud_models.dump_rows()`/`clear_cache()`、`asr_engine` 两个无人使用的 `text_utils` 别名。
 
-### Unplanned
+## [2026-08-30] — 包化重构与文档标准化
 
-- 硬字幕烧录及其 UI。
-- Nuitka 便携分发、安装包和对应 SBOM 流程。
+### Added
+
+- 标准化的项目文档入口：架构、Python/数据 API、贡献、部署、开发、故障排查和变更记录。
+- 文档状态分级：`verified-current`、`implemented-pending`、`unplanned`、`historical`。
+
+### Verified
+
+- 用户确认本机完整 ASR/对齐 E2E 正常；由于根目录三件参考资源由本项目生成，该结果证明项目自身链路自洽，不是独立外部数据集精度基准。
+- 用户确认本机 `libmpv` 测试通过并可正常使用。
+- 用户确认各类字幕文件在 Aegisub、mpv.net 中实际测试均支持。
+- 用户确认 PotPlayer 除 `\kf` 无法逐字扫过、只能整字亮外，其他字幕均正常。
+
+### Changed
+
+- 将上述本机验证结果与 Linux/无权重沙箱的验证边界分开记录。
+- 明确硬字幕烧录和 Nuitka 分发目前没有规划、排期或验收标准，不再把它们标成当前待办或已排期项。
+
+### Fixed
+
+- 修复 CI Ruff 对 `tests/test_punctuation.py` 的未使用导入/变量，以及 `tests/test_subtitle_overlay.py` 中装饰字符回归代码作用域错误的报告。
+- 修复 Qt 预览回归测试中临时 `QImage` 像素 buffer 比较和平台字体度量导致的脆弱断言。
+- GitHub Actions 更新到 Node 24 运行时的 `actions/checkout@v7` 与 `actions/setup-python@v7`，消除旧 Node 20 兼容性警告。
+- Ubuntu CI 补充 Qt Multimedia 所需的 `libpulse0`，修复 `QVideoFrame` 导入时缺少 `libpulse.so.0` 导致的 Pytest 失败。
+- 将四个小型项目 E2E/模板参考夹具从通用忽略规则中排除，确保 GitHub Actions checkout 后能读取测试所需的根目录资源。
+
+### Removed
+
+- 删除已完成迁移、且不再作为现役真源的三个中文历史文档；内容以根目录标准文档为准。
 
 ## [2026-08-23] — 播放与文档收敛
 
