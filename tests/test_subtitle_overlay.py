@@ -32,8 +32,9 @@ def _proj():
 
 # ═════════════ logic ═════════════
 
-def _case_segments_sentence_and_gap():
-    from ui.subtitle_overlay import compute_overlay_segments
+@pytest.mark.logic
+def test_segments_sentence_and_gap():
+    from ui.player.subtitle_overlay import compute_overlay_segments
     p = _proj()
     # 句级：整句一段
     segs = compute_overlay_segments(p, 1.6, "sentence")
@@ -45,8 +46,9 @@ def _case_segments_sentence_and_gap():
     assert compute_overlay_segments(None, 1.0, "word") == []
 
 
-def _case_segments_word_states_and_punct():
-    from ui.subtitle_overlay import compute_overlay_segments
+@pytest.mark.logic
+def test_segments_word_states_and_punct():
+    from ui.player.subtitle_overlay import compute_overlay_segments
     p = _proj()
     # t=1.7：「你」已唱、「好」正在唱、标点跟随前段、「世/界」未唱
     segs = compute_overlay_segments(p, 1.7, "word")
@@ -109,8 +111,9 @@ def _case_segments_word_states_and_punct():
             f"装饰字符在模板模式下应无动画状态，实际：{dec.state}"
 
 
-def _case_segments_karaoke_progress():
-    from ui.subtitle_overlay import compute_overlay_segments
+@pytest.mark.logic
+def test_segments_karaoke_progress():
+    from ui.player.subtitle_overlay import compute_overlay_segments
     p = _proj()
     # t=1.75：「好」(1.5~2.0) 扫过 50%
     segs = compute_overlay_segments(p, 1.75, "karaoke")
@@ -127,7 +130,8 @@ def _case_segments_karaoke_progress():
     assert abs(cur_tpl.progress - 0.5) < 1e-6
 
 
-def _case_playback_media_choice(tmp_path=None):
+@pytest.mark.logic
+def test_playback_media_choice(tmp_path=None):
     """视频始终播原文件（保画面）；纯音频仅人声分离后播人声轨。
 
     用户实测回归：视频导入后曾被提取的 .wav 顶掉播放媒体 → 画面永远丢失、
@@ -155,22 +159,14 @@ def _case_playback_media_choice(tmp_path=None):
         assert choose_playback_media(audio, missing, True) == audio
 
 
-@pytest.mark.logic
-def _case_overlay_segments_pack():
-    """字幕分段纯逻辑 4 合 1：句级与空隙 / 逐字三态与标点 / 卡拉OK进度 / 播放媒体选择。"""
-    _case_segments_sentence_and_gap()
-    _case_segments_word_states_and_punct()
-    _case_segments_karaoke_progress()
-    _case_playback_media_choice()
-
-
 # ═════════════ ui ═════════════
 
-def _case_player_panel_contract():
+@pytest.mark.ui
+def test_player_panel_contract():
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication(["test"])
-    from ui.player_panel import PlayerPanel
-    from ui.subtitle_overlay import PREVIEW_MODES
+    from ui.player import PlayerPanel
+    from ui.player.subtitle_overlay import PREVIEW_MODES
 
     panel = PlayerPanel()
     try:
@@ -230,7 +226,7 @@ def _case_player_panel_contract():
 
 
 @pytest.mark.ui
-def _case_selected_template_preview_changes_rendered_frame():
+def test_selected_template_preview_changes_rendered_frame():
     import numpy as np
     from PySide6.QtGui import QImage, QPainter
     from PySide6.QtWidgets import QApplication
@@ -238,7 +234,7 @@ def _case_selected_template_preview_changes_rendered_frame():
     from subs.ass_style import AssStylePrefs
     from subs.converter import WordHighlightStyle
     from subs.karaoke_template import default_karaoke_templates
-    from ui.subtitle_overlay import _template_scale_factor, paint_subtitle_overlay
+    from ui.player.subtitle_overlay import _template_scale_factor, paint_subtitle_overlay
 
     def render(mode: str, template=None, k_mode="kf") -> QImage:
         image = QImage(640, 360, QImage.Format.Format_ARGB32)
@@ -288,18 +284,6 @@ def _case_selected_template_preview_changes_rendered_frame():
         mode_image = render("karaoke_template", template, mode)
         assert pixels(mode_image) == template_pixels
 
-
-@pytest.mark.ui
-def _case_player_panel_preview_pack():
-    """播放面板契约：六档下拉与持久化 / 画面层切换 / 模板与 k-tag 接线。"""
-    _case_player_panel_contract()
-
-
-def test_subtitle_overlay_pack():
-    """test_subtitle_overlay_pack：合并 3 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_overlay_segments_pack()
-    _case_selected_template_preview_changes_rendered_frame()
-    _case_player_panel_preview_pack()
 
 if __name__ == "__main__":
     import sys

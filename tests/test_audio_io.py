@@ -48,7 +48,7 @@ def _fake_extract_factory(counter: list[int]):
 # 1. extract / split_plan / prepare_audio 边界
 # ══════════════════════════════════════════════════════════════
 
-def _case_extract_audio_end_without_start(tmp_path, monkeypatch):
+def test_extract_audio_end_without_start(tmp_path, monkeypatch):
     import subprocess
 
     inp = tmp_path / "in.mp4"
@@ -68,7 +68,7 @@ def _case_extract_audio_end_without_start(tmp_path, monkeypatch):
     assert "-ss" not in args          # 修复：end 单独给出时不再被忽略
 
 
-def _case_build_split_plan_param_validation():
+def test_build_split_plan_param_validation():
     from core.audio_io import build_split_plan
 
     with pytest.raises(ValueError):
@@ -83,7 +83,7 @@ def _case_build_split_plan_param_validation():
     assert plan.chunk_ranges and plan.total_duration == 100.0
 
 
-def _case_prepare_audio_truncates_long_stem(tmp_path, monkeypatch):
+def test_prepare_audio_truncates_long_stem(tmp_path, monkeypatch):
     media = tmp_path / ("a" * 90 + ".mp4")   # 90 字符 stem：超 80 触发截断，且 < 文件名长度上限
     media.write_bytes(b"x")
     captured = {}
@@ -102,7 +102,7 @@ def _case_prepare_audio_truncates_long_stem(tmp_path, monkeypatch):
     assert len(stem) <= 80            # 修复：超长 stem 不再突破 Windows 单组件长度
 
 
-def _case_prepare_audio_rebuilds_corrupt_cache(tmp_path, monkeypatch):
+def test_prepare_audio_rebuilds_corrupt_cache(tmp_path, monkeypatch):
     media = tmp_path / "song.mp4"
     media.write_bytes(b"x")
     st = media.stat()
@@ -130,7 +130,7 @@ def _case_prepare_audio_rebuilds_corrupt_cache(tmp_path, monkeypatch):
     assert cache.read_bytes() == b"RIFFxxxx"
 
 
-def _case_detect_silence_points_matches_naive():
+def test_detect_silence_points_matches_naive():
     from core.audio_io import detect_silence_points
 
     sr = 16000
@@ -172,7 +172,7 @@ def _case_detect_silence_points_matches_naive():
 # 2. WAV 零复制管线 / 重采样 / ASR 输入
 # ══════════════════════════════════════════════════════════════
 
-def _case_probe_and_in_memory_resample(tmp_path):
+def test_probe_and_in_memory_resample(tmp_path):
     # probe_native_audio：wav 直读 → AudioInfo；容器 → None
     wav = tmp_path / "a.wav"
     _make_wav(wav, 48000, 2)
@@ -191,7 +191,7 @@ def _case_probe_and_in_memory_resample(tmp_path):
     assert 0.45 * 16000 <= len(data2) <= 0.55 * 16000, f"重采样帧数不符: {len(data2)}"
 
 
-def _case_prepare_audio_cache_force_and_shortcircuit(tmp_path, monkeypatch):
+def test_prepare_audio_cache_force_and_shortcircuit(tmp_path, monkeypatch):
     wav = tmp_path / "voice.wav"
     _make_wav(wav, 48000, 2)
     calls = [0]
@@ -220,7 +220,7 @@ def _case_prepare_audio_cache_force_and_shortcircuit(tmp_path, monkeypatch):
     assert out == ready and info2.sample_rate == 16000
 
 
-def _case_prepare_asr_input_zero_copy_and_fallback(tmp_path, monkeypatch):
+def test_prepare_asr_input_zero_copy_and_fallback(tmp_path, monkeypatch):
     from core import asr_engine
 
     # 直读媒体：零提取，numpy 直喂
@@ -248,21 +248,6 @@ def _case_prepare_asr_input_zero_copy_and_fallback(tmp_path, monkeypatch):
     assert "__sr16000_ch1.wav" in wav_path2.name
     assert abs(total_sec2 - 0.2) < 0.01
 
-
-def test_audio_io_prepare_pack(tmp_path, monkeypatch):
-    """test_audio_io_prepare_pack：合并 5 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_extract_audio_end_without_start(tmp_path=tmp_path, monkeypatch=monkeypatch)
-    _case_build_split_plan_param_validation()
-    _case_prepare_audio_truncates_long_stem(tmp_path=tmp_path, monkeypatch=monkeypatch)
-    _case_prepare_audio_rebuilds_corrupt_cache(tmp_path=tmp_path, monkeypatch=monkeypatch)
-    _case_detect_silence_points_matches_naive()
-
-
-def test_audio_io_wav_passthrough_pack(tmp_path, monkeypatch):
-    """test_audio_io_wav_passthrough_pack：合并 3 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_probe_and_in_memory_resample(tmp_path=tmp_path)
-    _case_prepare_audio_cache_force_and_shortcircuit(tmp_path=tmp_path, monkeypatch=monkeypatch)
-    _case_prepare_asr_input_zero_copy_and_fallback(tmp_path=tmp_path, monkeypatch=monkeypatch)
 
 if __name__ == "__main__":
     import sys

@@ -17,7 +17,7 @@ import pytest
 pytestmark = pytest.mark.logic
 
 
-def _case_utf8_bom_srt():
+def test_utf8_bom_srt():
     content = "\ufeff1\n00:00:01,000 --> 00:00:03,000\n你好，世界！\n"
     with tempfile.NamedTemporaryFile("wb", suffix=".srt", delete=False) as f:
         f.write(content.encode("utf-8-sig"))
@@ -32,7 +32,7 @@ def _case_utf8_bom_srt():
         tmp_path.unlink()
 
 
-def _case_gb18030_srt():
+def test_gb18030_srt():
     content = "1\n00:00:02,500 --> 00:00:05,000\n这是一个GBK编码的中文字幕\n"
     with tempfile.NamedTemporaryFile("wb", suffix=".srt", delete=False) as f:
         f.write(content.encode("gb18030"))
@@ -52,7 +52,7 @@ def _case_gb18030_srt():
 from subs.subtitle_io import _parse_srt, _parse_vtt  # noqa: E402
 
 
-def _case_multiline_cue_join_rules():
+def test_multiline_cue_join_rules():
     """SRT/VTT 多行 cue：CJK 行界无空格、拉丁行界保留空格。"""
     srt = (
         "1\n00:00:01,000 --> 00:00:02,000\n青紫色的风\n掠过指尖\n\n"
@@ -72,7 +72,7 @@ def _case_multiline_cue_join_rules():
     assert ventries[1][2] == "say it out loud"
 
 
-def _case_import_dirty_contract_and_plain_text_preservation(tmp_path):
+def test_import_dirty_contract_and_plain_text_preservation(tmp_path):
     """所有外部导入统一标脏；显式 TXT 不得丢数字或箭头行。"""
     fixtures = {
         "sample.txt": "2024\nA --> B\n",
@@ -96,17 +96,6 @@ def _case_import_dirty_contract_and_plain_text_preservation(tmp_path):
     assert parsed["sample.ass"][0].text == "ASS line"
     assert parsed["sample.ass"][0].words[0].text == "ASS line"
 
-
-def test_encoding_detect_pack():
-    """test_encoding_detect_pack：合并 2 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_utf8_bom_srt()
-    _case_gb18030_srt()
-
-
-def test_encoding_cues_pack(tmp_path):
-    """test_encoding_cues_pack：合并 2 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_multiline_cue_join_rules()
-    _case_import_dirty_contract_and_plain_text_preservation(tmp_path=tmp_path)
 
 if __name__ == "__main__":
     import sys

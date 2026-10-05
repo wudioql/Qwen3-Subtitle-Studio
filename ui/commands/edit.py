@@ -8,9 +8,8 @@ from typing import Callable, List, Optional, Tuple
 
 from subs.models import Sentence, SubtitleProject
 
-from .base import _BaseCmd
+from .base import _BaseCmd, _SentenceEdgeCommand
 from .helpers import (
-    _bind_sentence_and_word_edges,
     _find_by_sid,
     _resolve_row,
 )
@@ -60,8 +59,8 @@ class EditTextCommand(_BaseCmd):
         self._notify()
 
 
-class EditTimeCommand(_BaseCmd):
-    """编辑单句 start / end。"""
+class EditTimeCommand(_SentenceEdgeCommand):
+    """编辑单句 start / end（redo/undo 共用 ``_SentenceEdgeCommand`` 状态机）。"""
 
     def __init__(
         self,
@@ -72,57 +71,7 @@ class EditTimeCommand(_BaseCmd):
         on_change: Callable[[], None],
     ):
         super().__init__(project, on_change, f"编辑时间 S{idx+1}")
-        self._idx = idx
-        # redo 末尾 sort 会把本句挪走，undo 必须按 sid 找回本句而非按旧行号写邻句
-        self._sid: int = project.sentences[idx].sid if 0 <= idx < len(project.sentences) else -1
-        self._new_start = new_start
-        self._new_end = new_end
-        self._old_start: float = 0.0
-        self._old_end: float = 0.0
-        self._old_dirty: bool = False
-        self._old_words = None
-        self._new_words = None
-        self._applied_start = float(new_start)
-        self._applied_end = float(new_end)
-        if 0 <= idx < len(project.sentences):
-            self._old_dirty = project.sentences[idx].is_dirty
-
-    def redo(self) -> None:
-        idx = _resolve_row(self._project, self._sid, self._idx)
-        if idx is None:
-            return
-        sent = self._project.sentences[idx]
-        self._old_start = sent.start_time
-        self._old_end = sent.end_time
-        self._old_dirty = sent.is_dirty
-        if self._new_words is None:
-            self._old_words = copy.deepcopy(sent.words)
-            _bind_sentence_and_word_edges(
-                sent, new_start=self._new_start, new_end=self._new_end,
-            )
-            self._applied_start = sent.start_time
-            self._applied_end = sent.end_time
-            self._new_words = copy.deepcopy(sent.words)
-        else:
-            sent.start_time = self._applied_start
-            sent.end_time = self._applied_end
-            sent.words = copy.deepcopy(self._new_words)
-        sent.is_dirty = True
-        self._project.sort()
-        self._notify()
-
-    def undo(self) -> None:
-        idx = _resolve_row(self._project, self._sid, self._idx)
-        if idx is None:
-            return
-        sent = self._project.sentences[idx]
-        sent.start_time = self._old_start
-        sent.end_time = self._old_end
-        if self._old_words is not None:
-            sent.words = copy.deepcopy(self._old_words)
-        sent.is_dirty = self._old_dirty
-        self._project.sort()
-        self._notify()
+        self._init_edge_state(project, idx, new_start, new_end)
 
 
 class AddSentenceCommand(_BaseCmd):

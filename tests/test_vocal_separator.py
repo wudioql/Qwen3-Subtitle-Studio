@@ -23,7 +23,7 @@ import pytest
 
 pytestmark = pytest.mark.logic
 
-def _case_fallback_and_extract():
+def test_fallback_and_extract():
     # ── vocal separator fallback ─────────────────────────
     sr = 44100
     duration = 2.0
@@ -59,10 +59,10 @@ def _case_fallback_and_extract():
         data, sr = sf.read(str(out_path))
         assert sr == 16000
         assert data.ndim == 1
-        print("test_extract_vocals_to_wav PASSED ✔")
+        print("test_fallback_and_extract / extract_vocals_to_wav PASSED ✔")
 
 
-def _case_vocals_cache_hit_skips_separation(monkeypatch, tmp_path):
+def test_vocals_cache_hit_skips_separation(monkeypatch, tmp_path):
     """人声分离缓存复用：同一媒体（内容指纹一致）第二次调用不再跑 ONNX。
 
     契约：
@@ -119,7 +119,7 @@ def _case_vocals_cache_hit_skips_separation(monkeypatch, tmp_path):
     print("test_vocals_cache_hit_skips_separation PASSED ✔")
 
 
-def _case_failed_separation_never_poison_cache(monkeypatch, tmp_path):
+def test_failed_separation_never_poison_cache(monkeypatch, tmp_path):
     import core.vocal_separator as vs
 
     monkeypatch.setattr(vs, "TEMP_DIR", tmp_path)
@@ -146,7 +146,7 @@ def _case_failed_separation_never_poison_cache(monkeypatch, tmp_path):
     assert fake_sep.separate.call_count == 3
 
 
-def _case_mdx_memory_budget_guard():
+def test_mdx_memory_budget_guard():
     import core.vocal_separator as vs
 
     short_estimate = vs._estimate_mdx_working_set_bytes(44100 * 10)
@@ -170,7 +170,7 @@ def _case_mdx_memory_budget_guard():
     fake_session.run.assert_not_called()
 
 
-def _case_context_and_multistage_progress():
+def test_context_and_multistage_progress():
     # ── model manager vocal context ─────────────────────────
     mm = ModelManager()
     with mm.using_vocal_separator() as sep:
@@ -193,22 +193,6 @@ def _case_context_and_multistage_progress():
         assert len(progress_stages) >= 2
         assert any("提取" in stage[2] for stage in progress_stages)
 
-
-def test_vocal_cache_pack(monkeypatch, tmp_path):
-    """test_vocal_cache_pack：合并 3 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_fallback_and_extract()
-    d_cache = tmp_path / "cache"
-    d_cache.mkdir()
-    _case_vocals_cache_hit_skips_separation(monkeypatch=monkeypatch, tmp_path=d_cache)
-    d_poison = tmp_path / "poison"
-    d_poison.mkdir()
-    _case_failed_separation_never_poison_cache(monkeypatch=monkeypatch, tmp_path=d_poison)
-
-
-def test_vocal_guard_pack():
-    """test_vocal_guard_pack：合并 2 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_mdx_memory_budget_guard()
-    _case_context_and_multistage_progress()
 
 if __name__ == "__main__":
     import sys

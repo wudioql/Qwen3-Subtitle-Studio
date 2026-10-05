@@ -18,7 +18,7 @@ import pytest  # noqa: E402
 pytestmark = pytest.mark.ui
 
 
-def _case_main_window_splitters_are_grip():
+def test_main_window_splitters_are_grip():
     from PySide6.QtWidgets import QApplication, QSplitter
     QApplication.instance() or QApplication(["test"])
 
@@ -37,7 +37,7 @@ def _case_main_window_splitters_are_grip():
     print("test_main_window_splitters_are_grip OK ✔")
 
 
-def _case_theme_qss_splitter_fallback_rules():
+def test_theme_qss_splitter_fallback_rules():
     """QSS 规则保留为默认 QSplitter 的兜底（主窗可见性由自绘握把承担）。"""
     from PySide6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication(["test"])
@@ -57,11 +57,12 @@ def _case_theme_qss_splitter_fallback_rules():
     themes.apply_theme(app, False)                   # 浅色
     light_qss = app.styleSheet()
     assert "#C9C9CE" in light_qss and "QSplitter::handle:pressed" in light_qss
-    themes.apply_theme(app, True)                    # 复位深色
+    # 不再「复位深色」：那会让 conftest 的 autouse 兜底再花 ~1.6s 编译一次浅色 QSS，
+    # 而本用例结束后没有任何断言依赖深色。停在浅色 = 兜底零成本。
     print("test_theme_qss_splitter_fallback_rules OK ✔")
 
 
-def _case_grip_colors_pins():
+def test_grip_colors_pins():
     from PySide6.QtGui import QColor
     from ui.widgets import _grip_colors
 
@@ -93,7 +94,7 @@ def _count_color(img, want) -> int:
     return n
 
 
-def _case_grip_paint_pixels_both_orientations():
+def test_grip_paint_pixels_both_orientations():
     """像素级：常态深色 把手底色 + 三段握把 真实落笔（横/竖两向）。
 
     离屏实测：show() 新顶层窗口会段错误、未 show 的控件 render() 绘制被跳过——
@@ -128,7 +129,7 @@ def _case_grip_paint_pixels_both_orientations():
 
 # ═════════════ 主题切换布局零跳变 + 外壳 QSS 应用级安装 ═════════════
 
-def _case_first_theme_toggle_does_not_change_layout():
+def test_first_theme_toggle_does_not_change_layout():
     from PySide6.QtWidgets import QApplication, QPushButton, QToolBar
     app = QApplication.instance() or QApplication(["test"])
     # 注意：不调 setStyle / 不额外 processEvents / 不 show()——三者在离屏 + 前序
@@ -161,10 +162,16 @@ def _case_first_theme_toggle_does_not_change_layout():
             assert geometry() == baseline, f"第 {i} 次切换主题后布局发生跳变"
     finally:
         win.close()
+        # ⚠️ 必须还原主题（2026-10-04 修）：本用例连切 3 次后停在**深色**，
+        # 而``_on_toggle_theme`` 改的是**进程级**主题状态。此前只win.close()，
+        # 于是全量套件里后续任何依赖渲染结果的测试都会读到深色主题——
+        # test_toolbar 的墨迹像素判据就是这样被误判成「文字被截断」的。
+        # 测试之间的全局状态必须还原，否则整轮结果依赖执行顺序。
+        apply_theme(app, False)
     print("test_first_theme_toggle_does_not_change_layout PASSED ✔")
 
 
-def _case_apply_theme_targets_application_not_widget():
+def test_apply_theme_targets_application_not_widget():
     """apply_theme 误传 QWidget 时外壳 QSS 仍装应用级，不在窗口级叠加。"""
     from PySide6.QtWidgets import QApplication, QWidget
     app = QApplication.instance() or QApplication(["test"])
@@ -173,7 +180,7 @@ def _case_apply_theme_targets_application_not_widget():
     w = QWidget()
     try:
         w.setStyleSheet("")
-        apply_theme(w, True)                     # 故意传 widget
+        apply_theme(w, False)                    # 故意传 widget；浅色即可，避免留深色给兜底复位
         assert w.styleSheet() == "", "外壳 QSS 不得装到窗口级"
         assert len(app.styleSheet()) > 100, "外壳 QSS 应装在 QApplication 级"
     finally:
@@ -181,28 +188,43 @@ def _case_apply_theme_targets_application_not_widget():
     print("test_apply_theme_targets_application_not_widget PASSED ✔")
 
 
-def _case_theme_layout_stability_pack():
-    """主题切换布局稳定 2 合 1：任意次切换零跳变 / 外壳 QSS 只装应用级。"""
-    _case_first_theme_toggle_does_not_change_layout()
-    _case_apply_theme_targets_application_not_widget()
+def test_apply_theme_skips_reinstall_of_identical_shell_qss():
+    """同一套外壳 QSS 重复应用必须跳过重装——这是全量测试不退化到 O(N²) 的关键。
 
+    ``QApplication::setStyleSheet`` 会向**所有存活控件**广播样式变更并逐个重新
+    polish，代价随全局控件数线性增长（实测 2751 控件 0.18s、6275 控件约 0.6s）。
+    ``ui/main_window/window.py`` 的构建末尾会调用 ``apply_theme``，而全量测试里顶层
+    窗口只增不减——若这里恢复成无条件重装，每次 `MainWindow()` 都要付一次全局广播，
+    整个套件就从 O(N) 退化成 O(N²)（2026-10-05 实测：改前 test_toolbar 35.4s、
+    改后 5.1s）。
 
-def _case_grip_colors_pack():
-    """六组握把配色钉样（并入聚合计数）。"""
-    _case_grip_colors_pins()
+    本用例钉住两件事：① 同主题重复应用**不得**再调 `setStyleSheet`；
+    ② 主题真的变化时**必须**重装（幂等不能误伤切换）。
+    """
+    from unittest.mock import patch
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication(["test"])
 
+    from ui import themes
+    themes.apply_theme(app, False)               # 确保已停在浅色
+    light_qss = app.styleSheet()
 
-def test_splitter_pack():
-    """test_splitter_pack：合并 3 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_main_window_splitters_are_grip()
-    _case_theme_qss_splitter_fallback_rules()
-    _case_grip_paint_pixels_both_orientations()
+    with patch.object(app, "setStyleSheet") as spy:
+        themes.apply_theme(app, False)           # 同主题重复应用
+    spy.assert_not_called()
+    assert app.styleSheet() == light_qss
 
+    try:
+        with patch.object(app, "setStyleSheet") as spy:
+            themes.apply_theme(app, True)        # 主题变化 → 必须重装
+        spy.assert_called_once()
+    finally:
+        # setStyleSheet 被 spy 吞掉了，app 级 QSS 仍是浅色；apply_theme 会同步
+        # qfluentwidgets 内部主题（setTheme 不幂等），故这里能正确回到浅色。
+        themes.apply_theme(app, False)
+    assert themes.is_dark() is False, "用例结束必须回到浅色，别把深色留给兜底"
+    print("test_apply_theme_skips_reinstall_of_identical_shell_qss PASSED ✔")
 
-def test_theme_pack():
-    """test_theme_pack：合并 2 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_theme_layout_stability_pack()
-    _case_grip_colors_pack()
 
 if __name__ == "__main__":
     import sys

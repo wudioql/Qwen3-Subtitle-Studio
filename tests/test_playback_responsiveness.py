@@ -40,7 +40,7 @@ def _win_with_two_sentences():
     return win
 
 
-def _case_playback_highlight_decoupled_and_moved():
+def test_playback_highlight_decoupled_and_moved():
     from unittest.mock import patch
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication(["test"])
@@ -73,7 +73,7 @@ def _case_playback_highlight_decoupled_and_moved():
     win.close()
 
 
-def _case_user_seek_moved_selects_row_like_table_click():
+def test_user_seek_moved_selects_row_like_table_click():
     """波形点击/拖播放头：统一走 _follow_at（highlight_row + set_active_sentence(force=True)）。"""
     from unittest.mock import patch
 
@@ -102,7 +102,7 @@ def _case_user_seek_moved_selects_row_like_table_click():
     win.close()
 
 
-def _case_playback_follows_sentence_and_word_view():
+def test_playback_follows_sentence_and_word_view():
     """播放推进跨句：字级视图与波形字级图元都跟随光标所在句切换。"""
     from unittest.mock import patch
 
@@ -132,11 +132,11 @@ def _case_playback_follows_sentence_and_word_view():
     win.close()
 
 
-def _case_video_stage_renders_frame_directly():
+def test_video_stage_renders_frame_directly():
     from PySide6.QtGui import QImage
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication(["test"])
-    from ui.player_panel import _VideoSubtitleStage
+    from ui.player import _VideoSubtitleStage
 
     stage = _VideoSubtitleStage()
     stage.resize(320, 180)
@@ -151,12 +151,12 @@ def _case_video_stage_renders_frame_directly():
     stage.close()
 
 
-def _case_player_panel_caches():
+def test_player_panel_caches():
     """字幕 QPixmap 同字复用 + 缩放帧缓存新帧失效。"""
     from PySide6.QtGui import QImage
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication(["test"])
-    from ui.player_panel import _VideoSubtitleStage
+    from ui.player import _VideoSubtitleStage
     from subs.models import WordTimestamp
 
     proj = SubtitleProject(sentences=[
@@ -203,13 +203,13 @@ def _case_player_panel_caches():
     stage.close()
 
 
-def _case_prime_preview_hold_release():
+def test_prime_preview_hold_release():
     """静默首帧预卷：预卷期间不刷画面、只留首帧；结束后作为静帧显示（修复「导入后闪播一下」）。"""
     from PySide6.QtGui import QImage
     from PySide6.QtMultimedia import QVideoFrame
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication(["test"])
-    from ui.player_panel import _VideoSubtitleStage
+    from ui.player import _VideoSubtitleStage
 
     stage = _VideoSubtitleStage()
     stage.resize(320, 180)
@@ -238,14 +238,14 @@ def _case_prime_preview_hold_release():
     stage.close()
 
 
-def _case_mpv_backend_renders_audio_subtitles_and_falls_back_without_waiting(tmp_path):
+def test_mpv_backend_renders_audio_subtitles_and_falls_back_without_waiting(tmp_path):
     """mpv ready 后视频/音频均接管；纯音频也在 force-window 上用 libass 预览。"""
     from pathlib import Path
 
     from PySide6.QtWidgets import QApplication, QWidget
 
     QApplication.instance() or QApplication(["test"])
-    from ui.player_panel import PlayerPanel
+    from ui.player import PlayerPanel
 
     class FakeMpv:
         failed = False
@@ -302,15 +302,15 @@ def _case_mpv_backend_renders_audio_subtitles_and_falls_back_without_waiting(tmp
     panel.close()
 
 
-def _case_mpv_subtitle_generation():
+def test_mpv_subtitle_generation():
     """mpv 预览字幕按导出语义真生成（句级 SRT / 逐字 ASS / k-tag ASS），映射表完整。
 
     沙箱无 python-mpv → mpv 后端不激活，但字幕生成函数是纯逻辑可直测。
     """
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication(["test"])
-    from ui.player_panel import PlayerPanel
-    from ui.subtitle_overlay import PREVIEW_MODES
+    from ui.player import PlayerPanel
+    from ui.player.subtitle_overlay import PREVIEW_MODES
     from subs.models import WordTimestamp
 
     panel = PlayerPanel()
@@ -364,7 +364,7 @@ def _case_mpv_subtitle_generation():
     panel.close()
 
 
-def _case_player_focus_mode_and_compact_controls(tmp_path):
+def test_player_focus_mode_and_compact_controls(tmp_path):
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication, QSizePolicy
@@ -442,11 +442,11 @@ def _case_player_focus_mode_and_compact_controls(tmp_path):
     win.close()
 
 
-def _case_qt_pause_mutes_before_waiting_for_media_backend():
+def test_qt_pause_mutes_before_waiting_for_media_backend():
     from PySide6.QtWidgets import QApplication
 
     QApplication.instance() or QApplication(["test"])
-    from ui.player_panel import PlayerPanel
+    from ui.player import PlayerPanel
 
     calls = []
 
@@ -479,7 +479,7 @@ def _case_qt_pause_mutes_before_waiting_for_media_backend():
     panel.close()
 
 
-def _case_editor_set_playhead_skips_hidden_word_view():
+def test_editor_set_playhead_skips_hidden_word_view():
     from unittest.mock import patch
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication(["test"])
@@ -499,24 +499,6 @@ def _case_editor_set_playhead_skips_hidden_word_view():
     wp.assert_not_called()
     editor.close()
 
-
-def test_playback_follow_pack():
-    """test_playback_follow_pack：合并 3 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_playback_highlight_decoupled_and_moved()
-    _case_user_seek_moved_selects_row_like_table_click()
-    _case_playback_follows_sentence_and_word_view()
-
-
-def test_playback_render_pack(tmp_path):
-    """播放渲染 8 场景：含沉浸、Qt 即时静音暂停、mpv 路由与字幕生成。"""
-    _case_video_stage_renders_frame_directly()
-    _case_player_panel_caches()
-    _case_prime_preview_hold_release()
-    _case_mpv_backend_renders_audio_subtitles_and_falls_back_without_waiting(tmp_path)
-    _case_mpv_subtitle_generation()
-    _case_player_focus_mode_and_compact_controls(tmp_path)
-    _case_qt_pause_mutes_before_waiting_for_media_backend()
-    _case_editor_set_playhead_skips_hidden_word_view()
 
 if __name__ == "__main__":
     import sys

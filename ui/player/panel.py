@@ -1,4 +1,9 @@
-"""ui.player_panel — 播放与字幕预览面板
+"""ui.player.panel — 播放与字幕预览面板（``ui.player`` 包的兼容 façade）
+
+同包内的稳定子域（2026-10-05 由 ``ui/`` 根目录收包时一并去掉了冗余的 ``player_`` 前缀）：
+``stage`` / ``subtitle_preview`` / ``qt_runtime`` / ``focus_surface`` /
+``subtitle_overlay`` / ``mpv_backend`` / ``mpv_worker`` / ``qt_media``。
+本文件只留布局与对外 API，**须维持 < 500 行**（有回归测试钉住）。
 
 职责（本面板只预览；编辑在句表/波形）：
 - 视频：QMediaPlayer + **QVideoSink** 把帧画进 QWidget（**不用 QVideoWidget**）
@@ -26,10 +31,10 @@ from qfluentwidgets import CaptionLabel, ComboBox
 
 from subs.media_types import VIDEO_SUFFIXES
 
-from .player_focus_surface import FocusClickHost, PlayerFocusSurfaceMixin
-from .player_qt_runtime import QtPlaybackRuntimeMixin
-from .player_stage import _VideoSubtitleStage
-from .player_subtitle_preview import SubtitlePreviewMixin
+from .focus_surface import FocusClickHost, PlayerFocusSurfaceMixin
+from .qt_runtime import QtPlaybackRuntimeMixin
+from .stage import _VideoSubtitleStage
+from .subtitle_preview import SubtitlePreviewMixin
 from .qt_media import (
     HAS_QT_MULTIMEDIA as _HAS_QT_MULTIMEDIA,
     QAudioOutput,

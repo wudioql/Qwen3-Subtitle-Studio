@@ -24,7 +24,7 @@ import librosa
 
 from .constants import TEMP_DIR, ensure_temp_dir
 from .audio_io import ensure_ffmpeg
-from .task_control import raise_if_cancelled
+from .task_control import TaskCancelled, raise_if_cancelled
 
 logger = logging.getLogger(__name__)
 
@@ -163,9 +163,12 @@ class VocalSeparator:
 
         want_cuda = (self.device == "cuda")
         req_label = "CUDA" if want_cuda else "CPU"
+        # 进度约定（AGENTS.md §3）：**不可知耗时一律 total=0**，由 UI 补「已用时」；
+        # 只有「帧块循环」这种真有 done/total 的地方才报真实分子分母。
+        # 此前这里报 (15,100) 是编出来的——Session 创建/权重 I/O 的耗时完全不可知。
         if progress_cb is not None:
             try:
-                progress_cb(15, 100, f"正在加载 Kim_Vocal_2 神经网络模型 ({req_label})...")
+                progress_cb(0, 0, f"正在加载 Kim_Vocal_2 神经网络模型 ({req_label})...")
             except Exception:
                 pass
 
@@ -196,7 +199,7 @@ class VocalSeparator:
         # 阶段 1: 音频载入与标准化至 44.1kHz 双声道 (0% -> 12%)
         if progress_cb is not None:
             try:
-                progress_cb(5, 100, "正在提取音频流 (FFmpeg 44.1kHz 双声道)...")
+                progress_cb(0, 0, "正在提取音频流 (FFmpeg 44.1kHz 双声道)...")
             except Exception:
                 pass
 
@@ -234,7 +237,7 @@ class VocalSeparator:
 
         if progress_cb is not None:
             try:
-                progress_cb(12, 100, "音频流解析完成")
+                progress_cb(0, 0, "音频流解析完成")
             except Exception:
                 pass
 
@@ -256,7 +259,7 @@ class VocalSeparator:
             # 阶段 4: 转为单声道并重采样至 target_sr (16kHz) (88% -> 100%)
             if progress_cb is not None:
                 try:
-                    progress_cb(92, 100, "正在生成 16kHz 高清人声音频...")
+                    progress_cb(0, 0, "正在生成 16kHz 高清人声音频...")
                 except Exception:
                     pass
 
@@ -274,6 +277,13 @@ class VocalSeparator:
 
             logger.info("[VocalSeparator] 人声分离完成 (采样点数=%d, 时长=%.2fs)", vocals_target.size, vocals_target.size / target_sr)
             return vocals_target
+        except TaskCancelled:
+            # 取消**不是**推理故障，绝不能走下面「安全回退为原音频」的兜底：
+            # TaskCancelled 是 RuntimeError（也就是 Exception）子类，会被下面的
+            # except Exception 吞掉 —— 一旦吞掉，用户点了取消却停不下来，
+            # separate() 正常返回原音频、任务显示「成功」，Worker 也收不到
+            # cancelled（AGENTS.md §3「合作式取消」）。必须原样抛给上层。
+            raise
         except Exception as e:
             logger.warning("[VocalSeparator] ONNX 人声提取推断异常 (%s)，安全回退为原音频", e)
             mono_audio = np.mean(audio_44k, axis=0)
@@ -308,7 +318,7 @@ class VocalSeparator:
 
         if progress_cb is not None:
             try:
-                progress_cb(25, 100, "正在进行短时傅里叶变换 (STFT 频域转换)...")
+                progress_cb(0, 0, "正在进行短时傅里叶变换 (STFT 频域转换)...")
             except Exception:
                 pass
 
@@ -339,8 +349,8 @@ class VocalSeparator:
             raise_if_cancelled(cancel_cb)   # 合作式取消：逐块安全点
             if progress_cb is not None:
                 try:
-                    pct = int(30 + ((i + 1) / max(1, n_chunks)) * 55)
-                    progress_cb(pct, 100, f"正在分离伴奏与人声 ({i+1}/{n_chunks} 帧块，{pct}%)...")
+                    # 唯一**真有** done/total 的阶段 → 报真实分子分母，不折算成百分比。
+                    progress_cb(i + 1, n_chunks, f"正在分离伴奏与人声 ({i+1}/{n_chunks} 帧块)...")
                 except Exception:
                     pass
             chunk = spec_4ch_padded[:, :, i * dim_t : (i + 1) * dim_t]
@@ -350,7 +360,7 @@ class VocalSeparator:
 
         if progress_cb is not None:
             try:
-                progress_cb(86, 100, "正在逆傅里叶还原时域波形 (iSTFT)...")
+                progress_cb(0, 0, "正在逆傅里叶还原时域波形 (iSTFT)...")
             except Exception:
                 pass
 

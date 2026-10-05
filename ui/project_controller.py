@@ -171,6 +171,76 @@ class ProjectController:
         w._reset_project_file_state(path=None, modified=False)
         # 「模式」文案与动作恢复由 WorkflowController._on_worker_done 用 done_label 收尾
 
+    def extract_vocals_now(self) -> None:
+        """工具栏「人声提取」按钮：**对当前已载入媒体**主动提取纯人声。
+
+        与导入流程里的自动提取（:meth:`_should_extract_vocals`）的区别：
+        那个只在导入/重关联时按偏好**询问**一次；本方法是用户**显式发起**的
+        二次处理——媒体已经打开、可能已经识别过字幕，此时想去掉伴奏重跑识别
+        就用它（字幕数据保留，只换音频轨）。
+
+        守卫顺序刻意如此，任何一步不满足就**提前返回且不弹窗**：
+        1. 无工程 / 无媒体 → 按钮应为禁用态，真被点到也只是安静返回；
+        2. 已有任务在跑 → 交给既有的 ``ensure_no_running_worker`` 统一提示；
+        3. 人声模型不可用 → 必须明确告知原因（否则用户以为按钮坏了）。
+        """
+        w = self._win
+        project = w._project
+        if project is None or not project.source_media_path:
+            return
+        if not w.workflow.ensure_no_running_worker():
+            return
+
+        from core.vocal_separator import get_vocal_separator
+        if not get_vocal_separator().is_available():
+            QMessageBox.warning(
+                w, "无法提取人声",
+                "人声分离模型（Kim_Vocal_2）不可用。\n\n"
+                "请在「设置 → 路径」里检查人声模型路径，或先导入媒体让程序准备好模型。",
+            )
+            return
+
+        path = Path(project.source_media_path)
+        if not path.is_file():
+            QMessageBox.critical(w, "提取失败", f"媒体文件不存在：\n{path}")
+            return
+
+        # 已提取过就别重复跑：分离是分钟级重活，且结果一样。
+        if self._has_vocal_audio(project):
+            QMessageBox.information(
+                w, "已经提取过",
+                "当前工程已在使用提取出的人声音轨，无需重复提取。\n\n"
+                "若要回到原始音频，请重新打开媒体。",
+            )
+            return
+
+        self._start_media_prep(
+            path,
+            do_vocals=True,
+            done_label="人声提取完成，可重新识别",
+            on_ready=self._finish_vocal_prep,
+        )
+
+    @staticmethod
+    def _has_vocal_audio(project) -> bool:
+        """当前工程的音频轨是否已经是提取出来的人声（而非原始媒体）。"""
+        ap = project.audio_path or ""
+        src = project.source_media_path or ""
+        return bool(ap) and ap != src
+
+    def _finish_vocal_prep(self, path: Path, audio_path, info, vocal_extracted: bool) -> None:
+        """人声提取完成：换音频轨 + 重载波形，**保留全部字幕**。
+
+        刻意复用「只替换媒体字段」的提交逻辑（与重新关联同一条路径）而不是
+        重新建工程——用户的目的就是「同一份字幕、换成去伴奏的音轨再识别」，
+        重建工程会把字幕清空，那就完全跑偏了。
+        """
+        w = self._win
+        if not vocal_extracted or not audio_path:
+            QMessageBox.warning(w, "人声提取未完成", "未产生人声音轨，继续使用原音频。")
+            return
+        self._finish_relink_prep(path, audio_path, info, True)
+
     def _finish_relink_prep(self, path: Path, audio_path, info, vocal_extracted: bool) -> None:
         """媒体准备完成：仅替换媒体字段，保留字幕（重新关联媒体路径）。"""
         w = self._win

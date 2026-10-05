@@ -21,7 +21,7 @@ pytestmark = pytest.mark.logic
 # 1. ensure_ffmpeg 冒烟探测缓存
 # ══════════════════════════════════════════════════════════════
 
-def _case_ffmpeg_smoke_cache_hit_and_invalidate(monkeypatch):
+def test_ffmpeg_smoke_cache_hit_and_invalidate(monkeypatch):
     import core.audio_io as aio
 
     aio.invalidate_ffmpeg_cache()
@@ -46,7 +46,7 @@ def _case_ffmpeg_smoke_cache_hit_and_invalidate(monkeypatch):
     aio.invalidate_ffmpeg_cache()
 
 
-def _case_ffmpeg_smoke_cache_invalidates_on_override_change(monkeypatch):
+def test_ffmpeg_smoke_cache_invalidates_on_override_change(monkeypatch):
     import core.audio_io as aio
 
     aio.invalidate_ffmpeg_cache()
@@ -74,7 +74,7 @@ def _case_ffmpeg_smoke_cache_invalidates_on_override_change(monkeypatch):
 # 2. is_available() 结果缓存
 # ══════════════════════════════════════════════════════════════
 
-def _case_vocal_separator_available_cached(tmp_path):
+def test_vocal_separator_available_cached(tmp_path):
     from core.vocal_separator import VocalSeparator
 
     model_file = tmp_path / "m.onnx"
@@ -87,7 +87,7 @@ def _case_vocal_separator_available_cached(tmp_path):
     assert sep.is_available() is False
 
 
-def _case_mms_aligner_available_cached(tmp_path):
+def test_mms_aligner_available_cached(tmp_path):
     from core.mms_aligner import MMSAligner
 
     model_dir = tmp_path / "mms"
@@ -105,7 +105,7 @@ def _case_mms_aligner_available_cached(tmp_path):
 # 3. 字体枚举缓存
 # ══════════════════════════════════════════════════════════════
 
-def _case_font_families_enumerated_once(monkeypatch):
+def test_font_families_enumerated_once(monkeypatch):
     import ui.ass_style_dialog.dialog as dlg
 
     monkeypatch.setattr(dlg, "_FONT_FAMILIES_CACHE", None)
@@ -121,18 +121,6 @@ def _case_font_families_enumerated_once(monkeypatch):
     assert calls["n"] == 1               # 只枚举一次
     assert r1 == r2 == ["Arial", "SimSun"]
 
-
-def test_ffmpeg_cache_pack(monkeypatch):
-    """test_ffmpeg_cache_pack：合并 2 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_ffmpeg_smoke_cache_hit_and_invalidate(monkeypatch=monkeypatch)
-    _case_ffmpeg_smoke_cache_invalidates_on_override_change(monkeypatch=monkeypatch)
-
-
-def test_availability_cache_pack(tmp_path, monkeypatch):
-    """test_availability_cache_pack：合并 3 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_vocal_separator_available_cached(tmp_path=tmp_path)
-    _case_mms_aligner_available_cached(tmp_path=tmp_path)
-    _case_font_families_enumerated_once(monkeypatch=monkeypatch)
 
 if __name__ == "__main__":
     import sys

@@ -1,12 +1,15 @@
-"""tests/test_undo_commands.py — ui.commands Undo/Redo 命令契约（压缩：9+2 → 5）
+"""tests/test_undo_commands.py — ui.commands Undo/Redo 命令契约（7 条独立用例）
 
-覆盖 Undo/Redo 全命令 + 拆分撤销钉样。
-覆盖：
-1. EditWordTimeCommand / WordBoundaryDragCommand redo / undo（合并）
-2. Confirm/Dirty/ToggleLock/ChangeLanguage redo / undo（合并）
+覆盖 Undo/Redo 全命令 + 拆分撤销钉样：
+1. EditWordTimeCommand / WordBoundaryDragCommand redo / undo
+2. Confirm/Dirty/ToggleLock/ChangeLanguage redo / undo
 3. 干净句编辑后 undo 精准恢复 is_dirty=False
-4. sort 重排后 undo 按 sid 复原（句级 / 字级 / 词序漂移，3 项合并）
+4. sort 重排后 undo 按 sid 复原（句级 / 字级 / 词序漂移）
 5. 拆分撤销：纯文本兜底可撤回 + sort 夹句不误删
+
+2026-10-05：原先只有单个 ``test_undo_commands_all_pack`` 被收集、7 条 ``_case_*`` 靠
+3 层聚合器转发，失败时只能看到 pack 名。已把叶子用例改名为 ``test_*`` 直接收集，
+删掉全部聚合器——断言逐条未动。
 """
 
 from __future__ import annotations
@@ -59,7 +62,7 @@ def _make_test_project() -> SubtitleProject:
     return SubtitleProject(sentences=[s1, s2], media_duration=10.0)
 
 
-def _case_edit_and_drag_commands():
+def test_edit_and_drag_commands():
     # EditWordTimeCommand redo/undo + 通知
     p = _make_test_project()
     notified: list = []
@@ -99,7 +102,7 @@ def _case_edit_and_drag_commands():
     assert abs(p.sentences[0].words[0].end_time - 1.5) < 1e-4
 
 
-def _case_confirm_dirty_lock_language_commands():
+def test_confirm_dirty_lock_language_commands():
     p = _make_test_project()
     assert p.sentences[0].is_dirty is True and p.sentences[1].is_dirty is False
 
@@ -128,7 +131,7 @@ def _case_confirm_dirty_lock_language_commands():
     assert p.sentences[0].language == "zh"
 
 
-def _case_undo_redo_restores_dirty_state():
+def test_undo_redo_restores_dirty_state():
     """对干净句（is_dirty=False）编辑后，undo 准确恢复 is_dirty=False。"""
     from ui.commands import EditTextCommand, EditTimeCommand, BoundaryDragCommand
 
@@ -163,7 +166,7 @@ def _case_undo_redo_restores_dirty_state():
     assert p.sentences[1].is_dirty is False
 
 
-def _case_undo_after_reorder_pack() -> None:
+def test_undo_after_reorder() -> None:
     """redo 末尾 sort 重排后，undo 必须按 sid 精准复原（句级/字级/词序）。"""
     from ui.commands import EditTimeCommand
 
@@ -223,7 +226,7 @@ def _case_undo_after_reorder_pack() -> None:
     assert p3.sentences[0].end_time == 2.0
 
 
-def _case_split_undo_pack():
+def test_split_undo():
     """拆分撤销链钉样：纯文本兜底可撤回 + sort 夹句不误删。"""
     # R2：光标在边界时拆分退化为纯文本编辑，必须也能撤回
     proj = SubtitleProject(audio_path="x.wav", source_language="zh",
@@ -260,7 +263,7 @@ def _s(text, lang):
     return Sentence(text=text, start_time=0.0, end_time=1.0, language=lang)
 
 
-def _case_merge_sentences_join_rules():
+def test_merge_sentences_join_rules():
     """合并句子：CJK 无空格 / 拉丁有空格；空语言按内容判定；yue 属 CJK 族。"""
     assert _merge_sentences([_s("第一句", "zh"), _s("第二句", "zh")]).text == "第一句第二句"
     assert _merge_sentences([_s("Hello world", "en"), _s("again now", "en")]).text == "Hello world again now"
@@ -271,7 +274,7 @@ def _case_merge_sentences_join_rules():
 
 # ═════════════ 拆句沿用拆前字级时间戳（含空白/音乐符号的句不再丢字级） ═════════════
 
-def _case_split_keeps_word_timestamps():
+def test_split_keeps_word_timestamps():
     from ui.commands.helpers import _split_sentence_at, _split_sentence_at_char
 
     # ① 光标拆：含空格的英文句（words 拼接 != text）必须保留字级时间戳
@@ -317,36 +320,3 @@ def _case_split_keeps_word_timestamps():
     assert l3.end_time == 1.8 and r3.start_time == 1.9
 
 
-# ── 聚合入口 ──────────────────────────────────────────────────────
-
-def _case_undo_commands_pack():
-    """命令层 5 合 1：编辑/拖界 / 确认脏锁语言 / 标脏回退 / sort 重排 sid 复原 / 拆分撤销。"""
-    _case_edit_and_drag_commands()
-    _case_confirm_dirty_lock_language_commands()
-    _case_undo_redo_restores_dirty_state()
-    _case_undo_after_reorder_pack()
-    _case_split_undo_pack()
-
-
-def _case_merge_text_join_pack():
-    """合并句文本拼接：CJK 无空格 / 拉丁有空格 / 空语言按内容判定。"""
-    _case_merge_sentences_join_rules()
-
-
-def _case_split_keeps_timestamps_pack():
-    """拆句沿用拆前字级时间戳：空白/音乐符号句不再整句丢字级。"""
-    _case_split_keeps_word_timestamps()
-
-
-def test_undo_commands_all_pack():
-    """test_undo_commands_all_pack：合并 3 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_undo_commands_pack()
-    _case_merge_text_join_pack()
-    _case_split_keeps_timestamps_pack()
-
-if __name__ == "__main__":
-    import sys
-
-    import pytest
-
-    sys.exit(pytest.main([__file__, "-q"]))

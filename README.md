@@ -18,7 +18,7 @@
 | 范围 | 状态 | 证据 / 边界 |
 |---|---|---|
 | 源码语法 | `verified-current` | `compileall` 通过 |
-| 字幕模型、导入导出、纯逻辑 | `verified-current` | 本次选定纯逻辑测试 13 passed、2 skipped |
+| 字幕模型、导入导出、纯逻辑 | `verified-current` | 纯逻辑与离屏合同测试通过；具体收集数不写死，以 `pytest -q -m logic` 当前结果为准 |
 | 本机完整 ASR/对齐 E2E | `verified-current` | 用户确认本机完整 E2E 正常；根目录三件参考资源由本项目生成，属于链路自洽验证，不是独立数据集基准 |
 | 本机 libmpv/libass | `verified-current` | 用户确认本机测试 OK，可正常使用 |
 | Aegisub / mpv.net 字幕兼容性 | `verified-current` | 用户确认各类字幕文件均已实际测试支持 |

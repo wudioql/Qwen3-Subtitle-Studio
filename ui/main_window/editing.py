@@ -205,46 +205,42 @@ class EditingMixin:
         self._sb_mode.setText(f"模式：已移动 S{idx + 1} {edge_name}")
 
 
-    def _on_confirm_sentences(self, rows: list) -> None:
+    def _push_sentences_command(
+        self,
+        rows: list,
+        cmd_cls: Callable,
+        done_msg: Callable[[int], str],
+    ) -> None:
+        """三条「按行批量改句状态」槽函数的公共骨架：校验行号 → 入栈 → 写状态栏。
+
+        三者唯一的差异是推入的命令类和状态栏文案，故由调用方以类 + 文案回调注入，
+        避免同一段校验/刷新逻辑被抄三遍、改一处漏两处。
+        """
         if self._project is None or not rows:
             return
         valid = [r for r in rows if 0 <= r < len(self._project.sentences)]
         if not valid:
             return
-        cmd = ConfirmSentencesCommand(
+        self._undo_stack.push(cmd_cls(
             self._project, valid,
             lambda: [self._refresh_single_row(r) for r in valid],
-        )
-        self._undo_stack.push(cmd)
-        self._sb_mode.setText(f"模式：已确认 {len(valid)} 句（清除待对齐标记）")
+        ))
+        self._sb_mode.setText(done_msg(len(valid)))
 
+    def _on_confirm_sentences(self, rows: list) -> None:
+        self._push_sentences_command(
+            rows, ConfirmSentencesCommand,
+            lambda n: f"模式：已确认 {n} 句（清除待对齐标记）")
 
     def _on_mark_dirty_sentences(self, rows: list) -> None:
-        if self._project is None or not rows:
-            return
-        valid = [r for r in rows if 0 <= r < len(self._project.sentences)]
-        if not valid:
-            return
-        cmd = SetSentencesDirtyCommand(
-            self._project, valid,
-            lambda: [self._refresh_single_row(r) for r in valid],
-        )
-        self._undo_stack.push(cmd)
-        self._sb_mode.setText(f"模式：已标脏 {len(valid)} 句（待 AI 重对齐）")
-
+        self._push_sentences_command(
+            rows, SetSentencesDirtyCommand,
+            lambda n: f"模式：已标脏 {n} 句（待 AI 重对齐）")
 
     def _on_toggle_lock_sentences(self, rows: list) -> None:
-        if self._project is None or not rows:
-            return
-        valid = [r for r in rows if 0 <= r < len(self._project.sentences)]
-        if not valid:
-            return
-        cmd = ToggleLockSentencesCommand(
-            self._project, valid,
-            lambda: [self._refresh_single_row(r) for r in valid],
-        )
-        self._undo_stack.push(cmd)
-        self._sb_mode.setText(f"模式：已切换 {len(valid)} 句锁定保护")
+        self._push_sentences_command(
+            rows, ToggleLockSentencesCommand,
+            lambda n: f"模式：已切换 {n} 句锁定保护")
 
 
     def strip_trailing_punct(self) -> None:

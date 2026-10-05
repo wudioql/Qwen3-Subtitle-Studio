@@ -42,7 +42,7 @@ def _make_temp_layout(root: Path) -> None:
     (export_dir / "out.srt").write_text("1\n", encoding="utf-8")
 
 
-def _case_shutdown_cleanup_preserves_caches(tmp_path, monkeypatch):
+def test_shutdown_cleanup_preserves_caches(tmp_path, monkeypatch):
     monkeypatch.setattr(tc, "TEMP_DIR", tmp_path)
     _make_temp_layout(tmp_path)
 
@@ -60,7 +60,7 @@ def _case_shutdown_cleanup_preserves_caches(tmp_path, monkeypatch):
     assert (tmp_path / "short-talk-exports" / "out.srt").exists()
 
 
-def _case_startup_cleanup_age_policy(tmp_path, monkeypatch):
+def test_startup_cleanup_age_policy(tmp_path, monkeypatch):
     monkeypatch.setattr(tc, "TEMP_DIR", tmp_path)
     _make_temp_layout(tmp_path)
 
@@ -84,7 +84,7 @@ def _case_startup_cleanup_age_policy(tmp_path, monkeypatch):
     assert (tmp_path / "short-talk-exports" / "out.srt").exists()
 
 
-def _case_log_rotation_truncates_tail(tmp_path, monkeypatch):
+def test_log_rotation_truncates_tail(tmp_path, monkeypatch):
     monkeypatch.setattr(tc, "TEMP_DIR", tmp_path)
     monkeypatch.setattr(tc, "LOG_MAX_BYTES", 1000)
     log = tmp_path / "app.log"
@@ -96,17 +96,6 @@ def _case_log_rotation_truncates_tail(tmp_path, monkeypatch):
     assert data.startswith(b"... [log rotated] ...")
     assert len(data) < 1000
 
-
-def test_temp_cleanup_pack(tmp_path, monkeypatch):
-    """test_temp_cleanup_pack：合并 3 个场景（断言逐条保留，见各 _case_*）。"""
-    for name, case in (
-        ("shutdown", _case_shutdown_cleanup_preserves_caches),
-        ("startup", _case_startup_cleanup_age_policy),
-        ("rotation", _case_log_rotation_truncates_tail),
-    ):
-        d = tmp_path / name
-        d.mkdir()
-        case(tmp_path=d, monkeypatch=monkeypatch)
 
 if __name__ == "__main__":
     import sys

@@ -30,7 +30,7 @@ def _fake_ctor(fn):
     return SimpleNamespace(from_pretrained=fn)
 
 
-def _case_flash_attn_error_classification():
+def test_flash_attn_error_classification():
     from core.model_manager import _is_flash_attn_error
 
     assert _is_flash_attn_error(ImportError("flash_attn backend missing")) is True
@@ -40,7 +40,7 @@ def _case_flash_attn_error_classification():
     assert _is_flash_attn_error(FileNotFoundError("model dir missing")) is False
 
 
-def _case_model_load_passes_local_files_only():
+def test_model_load_passes_local_files_only():
     from core.model_manager import _try_load_with_attn_fallback
 
     calls = []
@@ -57,7 +57,7 @@ def _case_model_load_passes_local_files_only():
     assert calls[0]["attn_implementation"] == "sdpa"
 
 
-def _case_fa2_precheck_skips_reload_when_not_installed(monkeypatch):
+def test_fa2_precheck_skips_reload_when_not_installed(monkeypatch):
     import importlib.util
 
     from core.model_manager import _try_load_with_attn_fallback
@@ -79,7 +79,7 @@ def _case_fa2_precheck_skips_reload_when_not_installed(monkeypatch):
     assert calls[0]["local_files_only"] is True
 
 
-def test_fa2_fallback_pack(monkeypatch):
+def test_fa2_fallback(monkeypatch):
     """FA2 类错误 → 回退 SDPA；其它异常 → 原样抛出、不回退重载。"""
     import importlib.util
 
@@ -120,12 +120,6 @@ def test_fa2_fallback_pack(monkeypatch):
         )
     assert len(calls2) == 1   # 未回退重载，不掩盖真实 OOM
 
-
-def test_model_manager_contract_pack(monkeypatch):
-    """test_model_manager_contract_pack：合并 3 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_flash_attn_error_classification()
-    _case_model_load_passes_local_files_only()
-    _case_fa2_precheck_skips_reload_when_not_installed(monkeypatch=monkeypatch)
 
 if __name__ == "__main__":
     import sys

@@ -23,7 +23,7 @@
 
 ## 3. 技术硬约束
 
-- ASR：`AutoModelForMultimodalLM`；口语对齐：`AutoModelForTokenClassification`；歌词：ONNX MMS-FA。ORT Provider/cuDNN/CPU 回退唯一实现是 `core/ort_cuda.py`；`ort_session.py` 仅旧导入兼容 façade，不得再复制逻辑。Windows `os.add_dll_directory` handle 必须进程级持有。
+- ASR：`AutoModelForMultimodalLM`；口语对齐：`AutoModelForTokenClassification`；歌词：ONNX MMS-FA。ORT Provider/cuDNN/CPU 回退唯一实现是 `core/ort_cuda.py`（原 `ort_session.py` 兼容 façade 已删除：全仓无生产 import，留着只会让「谁是真源」模糊）。Windows `os.add_dll_directory` handle 必须进程级持有。
 - ASR 出字后直通全局对齐；`return_word_timestamps` 只决定是否保留 `Sentence.words`。
 - 显存：ASR/对齐互斥激活。**Qwen park→RAM**；**MMS 任务结束销毁 ONNX Session**（勿只 `empty_cache`）。峰值目标 ≤4.5GB。
 - MMS 后处理：频谱平坦度/RMS 每次 align 只预计算一次；CTC 使用滚动 score + uint8 回溯并受 512MiB 预算约束，帧不足/无法完整到终态必须报错，禁止返回部分路径。
@@ -43,27 +43,30 @@
 - `.txt` 是纯文本合同（数字行/`-->` 不得过滤）；SRT/VTT/LRC/ASS/TXT 经 UI 导入后统一 `is_dirty=True`，原时间/字级仍保留。
 - Undo：命令快照 `_old_dirty`，撤回还原脏/锁；非 Undo 操作（ASR/对齐/导入/重关联）必须显式标记工程未保存。
 - 后台取消为**合作式安全点**：不得强杀 QThread/模型前向；Worker 统一发 `cancelled`，所有成功/失败/取消最终都由 `QThread.finished` 恢复 UI。关闭时任务未停则延后销毁模型。
-- 进度：模型权重 I/O/GPU 搬运/单次 forward 用 `total=0` 不确定进度 + 已用时，禁止伪造百分比；句/语言段/MMS 音频块用真实 done/total。ModelState 包含 loading/activating，进度回调必须同步刷新右下角状态。
+- **云端 ASR**（`core/cloud_asr/`，可选后端；`client`=HTTP 传输 / `language`=语言决议 / `encoding`=上传编码 / `facts`=计费账本 / `types`·`errors`·`constants`，包入口只做再导出）：识别后端二选一，`asr_backend="cloud"` 时**只把「取文本」换成 HTTP 调用**，字级时间戳仍 100% 由本地对齐器产出（官方不支持 `verbose_json`，`response_format=verbose_json` → 400）。云端分支**绝不能碰 `model_manager`**——一旦踏进 `using_asr()`，本地 1.7B 就已被搬进显存，省显存目标当场作废；有源码级反回归测试守着。默认模型 `FunAudioLLM/SenseVoiceSmall`（免费模型里唯一覆盖中/英/日/粤），上传用 OPUS 32k（MP3 会引入错字）。HTTP **402 = 余额不足，绝不重试**；仅 429/5xx/网络异常退避重试。云端失败**不自动回落本地**（回落会静默吃满显存）。
+- **云端计费信息以账单实证为准**：官方没有任何可编程的价格/余额查询接口，运行时无法判断模型是否收费，只能依据 `VERIFIED_FREE_MODELS` / `PAID_MODELS` 账本；三方名单冲突时账本优先（`PAID_MODELS` > `VERIFIED_FREE_MODELS` > 定价页）。UI 说明里**不写死金额**（价格会过期），只给实证日期 + 查价去处。测试连接必须是零成本探活 `GET /v1/models`。
+- 逐句语种判定：ASR 只能返回单一 `language`，中英混说时**必须逐句判**（全文层面判一次会让英文段被标成中文）。判据「有汉字即中文（含混杂），纯拉丁才算英文」，不做字符数加权。仅云端路径传入 `sentence_language_fn`，本地路径不传 → 行为逐字不变。
+- 进度：模型权重 I/O/GPU 搬运/单次 forward/云端 HTTP 等待用 `total=0` 不确定进度 + 已用时，禁止伪造百分比；句/语言段/MMS 音频块/编码帧块用真实 done/total。ModelState 包含 loading/activating，进度回调必须同步刷新右下角状态——**`total=0` 的进度也必须转发**，不得丢弃（否则 UI 会长时间停在上一句文案上）。
 - 第六档“所选模板效果”只预览模板 Apply 后生成的 fx，**视觉上不得叠加基础 k-tag 扫过**；应用后 ASS 必须保留 template Comment 与 `Comment/effect=karaoke` 原 k-tag，生成行必须是 `Dialogue/effect=fx`。`template syl` 每条模板行只含自身，禁止旧式“每 syllable 一份 `alpha&HFF` 整句副本”；标点使用无动画的基础样式独立定位 fx（无坐标 API 才允许每句一条透明遮罩保底）。未设 noblank 时保留 kara[0]，全部源 Comment 排在追加的 fx 前。Qt 兼容路径只近似 form 的 fad/color/scale/glow/anchor；坐标按 alignment/margin/pixel font/ScaleX/Spacing 计算但仍允许字体度量容差。任意 Lua 不执行，仅安全变量与 `$var±number`；其它明确降级。
 - 卡拉OK“高亮变色”的稳定语义是**原色 → 高亮色**，默认白色 → 黄色。为兼容旧工程/偏好，JSON 键 `color_restore` 继续保存原色，现役代码/UI 不得再把它显示或解释成“回落色”。效果弹窗打开时定位唯一启用项；全不选才回落第一项。
 - 第五档基础 k-tag 必须实时读取 export.k_tag_mode：`kf/K` 扫过、`k` 瞬变、`ko` 瞬变且未唱字无描边；下拉变化立即刷新 PlayerPanel。
 - 波形普通滚轮向上必须增加 Y 视野中心；Ctrl/Shift/Alt 既有方向不变。近重合的前句 end / 后句 start 始终是两条独立边界：无论鼠标命中哪条，向左拖只改前句尾，向右拖只改后句首；禁止再用共享命令同步两句，确保可主动拉开间隙。
 - 工程 JSON：`schema_version=1`（**不 bump**，读宽松/写严格；仅破坏性变更才升版本）+ 有限时间/唯一 sid/布尔规整校验；同目录临时文件 `fsync` 后 `os.replace` 原子保存。媒体路径**相对化优先解析**（工程目录内转相对 + `media_path_hints` 兜底；跨 OS 绝对路径——Windows 盘符/POSIX 根——原样保留不误拼工程目录；相对路径统一正斜杠；畸形 `media_path_hints` 忽略）；跨机复现三件套（`ass_style_data`/`karaoke_template_data`/`export_settings`）随工程保存、打开时应用，预览模式/主题不入工程。媒体重关联只改媒体字段，不得清字幕。
 - 依赖：项目直接 import 的包必须直接列入 `requirements.txt` 并限定主版本；Torch/flash-attn 仍先按部署清单单装。禁止恢复“transitive 自带所以不声明”或“未来 5.x 永远兼容”说法。
-- 播放预览：`ui/player_panel.py` 是保持旧 API 的 façade（须维持 <500 行）；同画布绘制在 `player_stage.py`，画面点击/媒体门禁在 `player_focus_surface.py`，字幕生成/mpv 回调在 `player_subtitle_preview.py`，Qt 软解/首帧预卷在 `player_qt_runtime.py`，可选 QtMultimedia 导入唯一真源为 `qt_media.py`。`QVideoSink` 与字幕**同画布**绘制（不用 QVideoWidget，避免 Windows HWND 盖字幕）；`main.py` 启动前禁用 FFmpeg 硬解设备列表。mpv 后端为**唯一 python-mpv 接入点 `ui/mpv_backend.py`**（顶层不得 import mpv）；任何 import/初始化/播放/seek/字幕/terminate 原生调用都必须经 `ui/mpv_worker.py` daemon worker，GUI 线程只非阻塞入队、绝不 join，命令须有 watchdog + Qt 自动回退，time-pos 须限频。UI 事件循环启动后异步预热 mpv，使未导入媒体时也能显示“初始化/已就绪”；测试用 `QSS_DISABLE_MPV=1` 禁止真实 native worker。mpv 可接管视频与纯音频：纯音频必须用 `force-window` 建空白 VO、禁用封面图，并在该画布用 libass 真渲染字幕；Qt 只作 mpv 不可用/超时回退。路由必须看 active backend 而非媒体类型或 mpv 对象是否存在。mpv host 原生化前必须设置 `WA_DontCreateNativeAncestors`，应用启动前设置 `AA_DontCreateNativeWidgetSiblings`，禁止 HWND 属性扩散到 Fluent ComboBox/Popup。已加载媒体时单击画面切换应用内沉浸模式：Qt stage 直接覆写 `mousePressEvent/mouseReleaseEvent` 发 `clicked`；Windows `--wid` 下 mpv native 路径由 `mpv_backend.py` 设置 `input_vo_keyboard=True`、关闭默认 bindings 并强制绑定 `MOUSE_BTN0`。`player_focus_surface.py` 只汇合 Qt clicked 与 mpv binding，不做平台级鼠标轮询；底部保持播放/暂停/停止三键居中。禁止只监听 host QWidget、恢复 self-event-filter 或叠加临时沉浸按钮；`main_window/player_focus.py` 只能保存 splitter 状态并隐藏/恢复兄弟面板、菜单、工具栏和状态栏，**禁止 setParent/reparent 播放器或原生 host**；再次单击或 Esc 恢复。播放/暂停/停止位于画面下方独立居中控制条，预览模式/后端为顶部右对齐定宽紧凑组，禁止悬浮在 mpv 原生 HWND 上。字幕经按 track id 管理的 `sub-add` 临时文件交给 libass 真渲染；替换成功后须在 worker 内执行非致命的相对精确 seek 0，强制暂停帧立即重绘，不能要求用户切换预览类型。正文、句时间、字时间及增删拆并的 Undo/Redo 回调必须调用 `PlayerPanel.refresh_subtitle_content()`：Qt 侧废弃字幕像素缓存，mpv 侧重建当前字幕轨。预览字幕由继承的 `_render_preview_subtitle` 复用导出唯一真源 `render_export` 生成（档位→kind 映射 `_MPV_PREVIEW_KIND`）。
+- 播放预览：`ui/player/panel.py` 是保持旧 API 的 façade（须维持 <500 行）；同画布绘制在 `player/stage.py`，画面点击/媒体门禁在 `player/focus_surface.py`，字幕生成/mpv 回调在 `player/subtitle_preview.py`，Qt 软解/首帧预卷在 `player/qt_runtime.py`，可选 QtMultimedia 导入唯一真源为 `player/qt_media.py`。`QVideoSink` 与字幕**同画布**绘制（不用 QVideoWidget，避免 Windows HWND 盖字幕）；`main.py` 启动前禁用 FFmpeg 硬解设备列表。mpv 后端为**唯一 python-mpv 接入点 `ui/player/mpv_backend.py`**（顶层不得 import mpv）；任何 import/初始化/播放/seek/字幕/terminate 原生调用都必须经 `ui/player/mpv_worker.py` daemon worker，GUI 线程只非阻塞入队、绝不 join，命令须有 watchdog + Qt 自动回退，time-pos 须限频。UI 事件循环启动后异步预热 mpv，使未导入媒体时也能显示“初始化/已就绪”；测试用 `QSS_DISABLE_MPV=1` 禁止真实 native worker。mpv 可接管视频与纯音频：纯音频必须用 `force-window` 建空白 VO、禁用封面图，并在该画布用 libass 真渲染字幕；Qt 只作 mpv 不可用/超时回退。路由必须看 active backend 而非媒体类型或 mpv 对象是否存在。mpv host 原生化前必须设置 `WA_DontCreateNativeAncestors`，应用启动前设置 `AA_DontCreateNativeWidgetSiblings`，禁止 HWND 属性扩散到 Fluent ComboBox/Popup。已加载媒体时单击画面切换应用内沉浸模式：Qt stage 直接覆写 `mousePressEvent/mouseReleaseEvent` 发 `clicked`；Windows `--wid` 下 mpv native 路径由 `player/mpv_backend.py` 设置 `input_vo_keyboard=True`、关闭默认 bindings 并强制绑定 `MOUSE_BTN0`。`player/focus_surface.py` 只汇合 Qt clicked 与 mpv binding，不做平台级鼠标轮询；底部保持播放/暂停/停止三键居中。禁止只监听 host QWidget、恢复 self-event-filter 或叠加临时沉浸按钮；`main_window/player_focus.py` 只能保存 splitter 状态并隐藏/恢复兄弟面板、菜单、工具栏和状态栏，**禁止 setParent/reparent 播放器或原生 host**；再次单击或 Esc 恢复。播放/暂停/停止位于画面下方独立居中控制条，预览模式/后端为顶部右对齐定宽紧凑组，禁止悬浮在 mpv 原生 HWND 上。字幕经按 track id 管理的 `sub-add` 临时文件交给 libass 真渲染；替换成功后须在 worker 内执行非致命的相对精确 seek 0，强制暂停帧立即重绘，不能要求用户切换预览类型。正文、句时间、字时间及增删拆并的 Undo/Redo 回调必须调用 `PlayerPanel.refresh_subtitle_content()`：Qt 侧废弃字幕像素缓存，mpv 侧重建当前字幕轨。预览字幕由继承的 `_render_preview_subtitle` 复用导出唯一真源 `render_export` 生成（档位→kind 映射 `_MPV_PREVIEW_KIND`）。
 - Qt fallback 暂停：`_silence_qt_pause_buffer()` 必须先于 `QMediaPlayer.pause()` 同步静音，播放/自动恢复前调用 `_restore_qt_pause_audio()` 还原用户原静音值；`_end_priming()` 只有真实 priming 时才能恢复预卷音量，禁止普通 pause/stop 误取消暂停静音。
 
 ## 4. 当前实现（摘要）
 
-- `core/`：`model_manager`、`asr_engine`、`align_engine/`、`mms_aligner/`、`vocal_separator`、`audio_io`、`text_utils`、`app_config`、`ort_cuda`、`temp_cleanup`。
+- `core/`：`model_manager`、`asr_engine/`（config 配置 / splitting 切句文本层 / sentences 句子构造 / pipeline 主流程，入口只再导出）、`align_engine/`、`mms_aligner/`、`vocal_separator`、`audio_io`、`text_utils`、`app_config`、`constants`（路径/时长/采样率等常量与 `TEMP_DIR`，`QSS_TEMP_DIR` 可重定向）、`language_utils`（11 种对齐语言的短名↔全名单一真源；`asr_engine` 与 `align_engine` 都从这里取，避免互相 import）、`task_control`（合作式取消安全点）、`ort_cuda`、`temp_cleanup`、`cloud_asr/`（云端 ASR 客户端，仅标准库；client/language/encoding/facts/types/errors/constants 七子模块，入口只再导出）、`cloud_models`（云端模型清单/计费实证账本）。
 - `subs/`：模型 + 导入导出 + ASS/卡拉OK 模板（无 pysubs2）。
-- `ui/`：包 `main_window/`、`commands/`、`waveform_view/`、`sentence_level_view/`、`ass_style_dialog/`；播放器 façade + focus/stage/subtitle/Qt runtime 子域及主窗沉浸模式；控制器 workflow/project；导出侧栏；设置/卡拉OK 弹窗。
+- `ui/`：包 `main_window/`、`commands/`、`waveform_view/`、`sentence_level_view/`、`ass_style_dialog/`、`player/`、`settings/`；播放器 façade + focus/stage/subtitle/Qt runtime 子域及主窗沉浸模式；控制器 workflow/project；导出侧栏；设置/卡拉OK 弹窗（`settings/` 目前只收云端 ASR 分区，其余仍在 `settings_dialog.py`）。
 - `workers/`：`TranscribeWorker`；`AlignWorker` 仅 `sentences` | `dirty` | `full`（无 `mode=project`）。
 - 菜单含 **打开/保存工程、重新关联媒体**；`.json/.qss.json` 可拖放并复用打开工程完整逻辑。重新关联媒体与普通打开共用默认人声提取流程。
 - 破坏性替换/退出有中文“保存工程 / 不保存 / 取消”门禁；析构期 cleanChanged 不得重新访问已删除 QUndoStack。导入字幕后须先设句语言再手动对齐。
 - `speaker` 字段仅数据/导出透传，**UI 未产品化**。
 - 应用图标已接入：`assets/icon.png`（512² 透明源）+ `assets/icon.ico`（16–256 多尺寸），`main.py` 启动时 `setWindowIcon`；缺失时静默降级不影响启动。
-- libmpv 真 ASS 预览已接入（**可选后端，本机已实测通过**）：根目录 `libmpv-2.dll` + `python-mpv` 均在位时异步启用，视频与纯音频均可用 libass 预览；纯音频由 force-window 提供空白画布。缺依赖、初始化/命令失败或 watchdog 超时则回退 QMediaPlayer + QPainter 兼容预览。后端无手动开关。用户已确认本机完整 E2E 正常，且各类字幕文件在 Aegisub/mpv.net 中实际测试均支持；PotPlayer 除 `\kf` 不能逐字扫过、只能整字亮外，其余字幕均正常。PlayerPanel 已拆为 479 行 façade + focus surface/stage/subtitle/Qt runtime/QtMultimedia adapter，旧 `PlayerPanel` 与 `_VideoSubtitleStage` 导入继续兼容；播放器支持不重挂 HWND 的应用内沉浸模式。模板特效由 **Python 应用器 `subs/karaoke_templater.py`** 展开：template/karaoke Comment、kara[0]、syl/line/char、fx Dialogue 与 furigana 样式已按用户 Aegisub golden 钉样；坐标仍是 QFontMetrics 近似，任意 Lua 不执行（仅安全变量与 `$var±number` 子集）。
+- libmpv 真 ASS 预览已接入（**可选后端，本机已实测通过**）：根目录 `libmpv-2.dll` + `python-mpv` 均在位时异步启用，视频与纯音频均可用 libass 预览；纯音频由 force-window 提供空白画布。缺依赖、初始化/命令失败或 watchdog 超时则回退 QMediaPlayer + QPainter 兼容预览。后端无手动开关。用户已确认本机完整 E2E 正常，且各类字幕文件在 Aegisub/mpv.net 中实际测试均支持；PotPlayer 除 `\kf` 不能逐字扫过、只能整字亮外，其余字幕均正常。PlayerPanel 已拆为 <500 行 façade + focus surface/stage/subtitle/Qt runtime/QtMultimedia adapter，旧 `PlayerPanel` 与 `_VideoSubtitleStage` 导入继续兼容；播放器支持不重挂 HWND 的应用内沉浸模式。模板特效由 **Python 应用器 `subs/karaoke_templater.py`** 展开：template/karaoke Comment、kara[0]、syl/line/char、fx Dialogue 与 furigana 样式已按用户 Aegisub golden 钉样；坐标仍是 QFontMetrics 近似，任意 Lua 不执行（仅安全变量与 `$var±number` 子集）。
 - **未规划**：硬字幕烧录、Nuitka 分发；当前没有明确规划、排期或验收标准，不得写成当前待办或既定路线。
 - 许可证：项目自有代码为 GPL-3.0（GPL 本身不限制商业使用）；默认运行组合因 PySide6-Fluent-Widgets 双许可和 MMS CC-BY-NC-4.0 模型而定位个人/非商业。商业部署须另购 GUI 商业许可并替换/复核非商业模型；唯一清单见 `THIRD_PARTY_NOTICES.md`，不得再写“GPLv3 本身仅非商业”。
 
@@ -76,12 +79,29 @@
 
 ### 6.1 拆包约定
 
-- 单文件 ≳500 行且 ≥2 稳定子域 → 改包；`__init__.py` **再导出**旧公开名；可 patch 符号经包入口查找。
+- 单文件 ≳500 行且 ≥2 稳定子域 → 改包；`__init__.py` **再导出**旧公开名（`__all__` 一并搬过去）。**patch 要打在「名字被查找的地方」**：包入口只是再导出的引用，对「定义在子模块里、按本模块 globals 解析」的函数无效——例：`monkeypatch.setattr(core.cloud_asr.client, "_http_post", …)` 生效，打在包上不生效；反之调用点写 `from .cloud_asr import transcribe_cloud` 懒加载的，就要打在包上。
 - 不拆：≲300 行单一控制器、`subs/models`、纯 QSS 大文件。
-- 禁止为分类做 `ui/dialogs/` 式大搬家。
+- 禁止为分类做 `ui/dialogs/` 式大搬家。判据不是「数量」而是**形状**：`ui/player/`、`ui/waveform_view/`、`ui/sentence_level_view/`（一个控件 + 只被簇内引用的内部件）与 `core/cloud_asr/`、`core/asr_engine/`（分层栈：`__init__` 是唯一 façade，子模块单向依赖，包外只碰 `__init__`）都允许；把散落在各处的对话框按类别归堆则不允许。
 
 ### 6.2 其它
 
 - 改 UI 先核对 `subs/models.py`；推理不进主线程。
 - 权威文档：`README.md`（入口与范围）、`ARCHITECTURE.md`（现役机制与边界）、`API.md`（Python/工程/Signal 合同）、`DEPLOYMENT.md`（目标机安装与验收）、`DEVELOPMENT.md`（开发与测试）、`TROUBLESHOOTING.md`（症状排查）、`CHANGELOG.md`（历史变更）、`THIRD_PARTY_NOTICES.md`（授权）。同一事实不要复制成长篇平行版本；原有中文迁移资料已清理。
 - 审查报告、逐批改动对照和累计补丁 ZIP 只属于临时协作交付物，不进入正式项目；若未来再次生成，收尾时按 `.agents/skills/neat-freak/` 先汇报再清场。
+
+### 6.3 测试约定
+
+- **每个断言体必须自身可被 pytest 收集**：测试函数一律以 `test_` 开头，不要写 `_case_*` 助手 + `test_xxx_pack` 聚合器的「N 合 1」写法，也不要写只做转发、不带断言的中间层。原因有三：① 失败只报聚合器名，定位不到具体场景；② 聚合器是**顺序执行**的，前一条抛错后面几条根本不会跑，于是被跨过的用例长期无人验证；③ `_` 开头的函数 pytest 不收集，marker 挂在上面等于没挂（`-m logic` / `-m ui` 会双双漏掉整个文件）。需要每个用例独立隔离时，直接让 pytest 注入 `tmp_path` / `monkeypatch` 即可，不要手工开子目录再传进去。
+- marker 用模块级 `pytestmark = pytest.mark.logic|ui`；**只有**同一文件里 logic 与 ui 混排时才用函数级 `@pytest.mark.*`（此时必须挂在被收集的 `test_*` 上）。
+- 合并/重构测试文件前先做**等价核验**，不要凭「看起来一样」下结论：用 AST 统计新旧文件的 `assert` 数、mock 断言数与顶层函数数，前两项必须逐字节相等，第三项的差额必须正好等于被删的纯转发函数个数。
+- 反过来也要当心：**AST 的 `assert` 计数看不见自定义断言助手**。`test_export_pipeline.py::_assert(cond, msg)` 这类「自己 raise AssertionError」的包装，以及 `pytest.raises(...)` 上下文，都不会被计入——那里有 9 个用例的计数是 0，但它们并非空转。**不要**用「assert 数 = 0」判定某个用例是死代码。
+- 已知的平台相关基线失败按**具体叶子用例名** deselect，不要 deselect 整个聚合器（那会把同包其它本来通过的用例一起盖掉）。当前两个：`tests/test_project_models.py::test_media_paths_relativize`（Windows 盘符路径被相对化）、`tests/test_toolbar.py::test_panel_shrink_layout`（`WordStyleCard` 字体度量 635 < 689）。
+- **测试之间的全局状态必须还原**，否则产生顺序依赖。已知两类，`tests/conftest.py` 各有一个 autouse 兜底：① **Qt 进程级主题**（`_restore_qt_theme_after_each_test`）；② **用户偏好**（`_isolate_preferences_after_each_test`）——`core.app_config.load_preferences` 有模块级 `_PREFS_CACHE`，而 UI 交互（如把 k-tag 下拉切成 `k`）会经 `save_preferences` **同时**刷新缓存与磁盘，于是「前一个测试改了偏好 → 后一个测试读到它」。典型症状（2026-10-05 实测）：`test_toolbar::test_ui_toolbar_and_workflow_controller` 把 `export.k_tag_mode` 写成 `k`，之后 `test_playback_responsiveness::test_mpv_subtitle_generation` 断言 `{\kf` 却拿到 `{\k50}`；全量顺序里 playback 恰好排在 toolbar **之前**才没暴露，换成任意子集/乱序就必失败。**新增任何写全局状态的入口，都要同时给它加还原**。
+- **想缩短全量耗时，不要删用例**。实测（2026-10-05，当时 356 条）：其中 297 条合计只花 14s，时间集中在少数 UI 文件；且这些文件的用例逐条都写了「同族另一条判据抓不到这个失效模式」的理由，删任何一条都是真实覆盖损失。真正的杠杆是**别重复付固定开销**，见下条。
+- **三个已验证的固定开销**，改相关代码时保持：
+  1. `uroman.Uroman()` 单次约 2.7s → 走 `core/mms_aligner/engine.py::_build_shared_uroman` 的模块级共享缓存，不要每建一个 aligner 就 new 一个。
+  2. 用例结尾不要手动把主题切回深色 → 会触发 conftest 的 autouse 兜底再编译一次整套 QSS（约 1.6s）。
+  3. **`apply_theme` 必须保持幂等**（见下条），否则每次 `MainWindow()` 都要付一次全局 QSS 广播。
+- **`ui/main_window/window.py` 构建末尾那次主题处理不能简化掉，但也不能退回无条件全局广播**。实测根因（2026-10-05）：应用级 QSS 若早于控件创建装上，控件「首次 polish」的几何与「re-polish」不一致（工具栏 `sizeHint().height()` 停在 35 而非 47），首次切换主题时布局会跳一下——所以那次「补 polish」是**必要的**。但它的**实现方式**决定了测试复杂度：`QApplication::setStyleSheet` 会向**所有存活控件**广播样式变更并逐个 repolish，而全量测试里顶层窗口只增不减（`close()` 不销毁 C++ 对象、`WorkflowController`/`ProjectController` 与窗口互为强引用），于是每次 `MainWindow()` 都是 O(存活数)、全量退化成 **O(N²)**。现拆成两步：① `ui/themes.py::apply_theme` **幂等**——外壳 QSS 已是一套时跳过 `setStyleSheet`，但 `setTheme`/`_apply_palette` 仍每次都做（实测零成本，且承载 qfluentwidgets 内部主题状态，跳过会留下主题/QSS 不一致）；② 本窗口的 polish 由 `ui/themes.py::refresh_widget_style(self)` 单独补齐（~205 控件约 10~16ms，**不随全局存活数增长**）。
+  实测效果：`MainWindow()` 构造 251 控件 0.323s / 6275 控件 0.227s（改前 0.30s → 1.09s）；test_toolbar 35.4s → 5.1s；全量 116.5s → 61s。护栏：`tests/test_splitter_theme.py::test_apply_theme_skips_reinstall_of_identical_shell_qss`（同主题重复应用不得调 `setStyleSheet`、主题变化必须调）+ `test_first_theme_toggle_does_not_change_layout`（几何不跳变）。
+  ⚠️ `refresh_widget_style` 三个动作**缺一不可**（`unpolish`+`polish`、`QEvent.StyleChange`、`updateGeometry`），少了 `StyleChange` 几何不收敛。且**自带窗口级 QSS 的控件**（qfluentwidgets 的 `TableWidget`/`TableView`，自身 `styleSheet()` 约 1742 字符）走 Python 侧 `unpolish` 会**必段错误**（已最小复现；保活 style 包装器也崩，与 GC 无关）——该函数因此对这类控件只补事件与几何失效。控件累积本身（330 → 7763）**仍未解决**，只是代价被解耦；主动销毁的三种写法（`deleteLater`+事件泵、`shiboken6.delete`、teardown 批量删顶层窗口）**全部段错误**，不要重试。

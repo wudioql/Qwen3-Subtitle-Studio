@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -39,6 +40,8 @@ class WorkflowController:
         self._progress_desc = ""
         self._progress_counts = ""
         self._done_label = "完成"
+        #: 本次任务使用的云端配置引用（浅拷贝共享，引擎会把用量写回这个对象）。
+        self._cloud_cfg = None
         self._elapsed_timer = QTimer(win)
         self._elapsed_timer.setInterval(1000)
         self._elapsed_timer.timeout.connect(self._refresh_elapsed_text)
@@ -89,6 +92,9 @@ class WorkflowController:
             w._act_open_project.setEnabled(True)
         if hasattr(w, "_act_relink_media"):
             w._act_relink_media.setEnabled(has_sentences)
+        # 人声提取需要「已有媒体」即可（不必有字幕：先提取再识别也是常见用法）
+        if hasattr(w, "_act_extract_vocals"):
+            w._act_extract_vocals.setEnabled(has_media)
         if hasattr(w, "_act_cancel_task"):
             w._act_cancel_task.setEnabled(False)
 
@@ -121,6 +127,8 @@ class WorkflowController:
         w._act_import_subtitle.setEnabled(False)
         if hasattr(w, "_act_relink_media"):
             w._act_relink_media.setEnabled(False)
+        if hasattr(w, "_act_extract_vocals"):
+            w._act_extract_vocals.setEnabled(False)
         if hasattr(w, "_act_cancel_task"):
             w._act_cancel_task.setEnabled(True)
         if hasattr(w, "_act_save_project"):
@@ -183,6 +191,7 @@ class WorkflowController:
             w._sb_mode.setText(f"模式：{self._done_label} · 用时 {elapsed}")
         w._sb_vram.setText(w._model_manager.status_text())
         self._running_worker = None
+        self._record_cloud_usage()
         media_paths = (
             (w._project.source_media_path, w._project.audio_path)
             if w._project is not None else ()
@@ -227,6 +236,15 @@ class WorkflowController:
         toolbar_lang = w._global_lang.currentData() if getattr(w, "_global_lang", None) else None
         cfg.source_language = toolbar_lang or "auto"
 
+        # 识别后端以工具栏即时选择为权威；云端额外装配 CloudASRConfig。
+        # 缺 Key 时 _prepare_cloud_asr 会给出引导并阻断本次识别。
+        self._cloud_cfg = None
+        cfg.asr_backend = (
+            w._asr_backend.currentData() if getattr(w, "_asr_backend", None) else "local"
+        ) or "local"
+        if cfg.asr_backend == "cloud" and not self._prepare_cloud_asr(cfg):
+            return
+
         worker = TranscribeWorker(
             media_path,
             model_manager=w._model_manager,
@@ -236,6 +254,73 @@ class WorkflowController:
         )
         worker.project.connect(self._on_project_result)
         self.bind_and_start_worker(worker, mode_label="识别 + 对齐")
+
+    def _prepare_cloud_asr(self, cfg: TranscribeConfig) -> bool:
+        """装配云端配置；返回 False 表示应当中止本次识别（已给出引导）。
+
+        为什么要在**开始前**拦一道
+        --------------------------------
+        本地路径缺权重是秒级失败；云端却要走完「编码 → 上传 → 排队 → 推理」才会在
+        服务端被 401 打回，白白付出几十秒，运气不好还可能已产生用量。而「Key 填没填」
+        是本机一秒钟就能查的事——能让用户早点知道的错误，就不该留到云端去报。
+
+        这里**不**校验语言是否为 auto：确有云端模型（SenseVoice）会自己返回 language，
+        一刀切禁止只是用方便换安全感；真不支持时 cloud_asr 会给出可操作的中文错误。
+        """
+        w = self._win
+        try:
+            from core.app_config import load_preferences
+            from core.cloud_asr import ENV_API_KEY, CloudASRConfig
+
+            cp = load_preferences().cloud_asr
+            has_key = bool((cp.api_key or "").strip()) or bool(os.environ.get(ENV_API_KEY, "").strip())
+            if not has_key:
+                QMessageBox.warning(
+                    w, "缺少云端 API Key",
+                    "识别后端已选为「云端」，但尚未配置 SiliconFlow API Key。\n\n"
+                    "请到「设置 → 云端 ASR」填入 API Key 并测试连接，"
+                    "或把工具栏的识别后端切回「本地」。",
+                )
+                try:
+                    w._on_open_settings()
+                except Exception:
+                    logger.debug("[ASR] 打开设置页失败")
+                return False
+
+            cloud_cfg = CloudASRConfig(**cp.to_transcribe_config_kwargs())
+            # 多数云端模型不返回 language，兜底用工具栏的即时语言选择。
+            cloud_cfg.source_language = cfg.source_language or "auto"
+            cfg.cloud_asr = cloud_cfg
+            self._cloud_cfg = cloud_cfg        # 引擎会把用量写回这个共享对象
+            return True
+        except Exception:
+            logger.exception("[ASR] 装配云端配置失败")
+            QMessageBox.critical(w, "云端配置错误", "读取云端 ASR 配置失败，详情见日志。")
+            return False
+
+    def _record_cloud_usage(self) -> None:
+        """任务收尾时把云端用量累加进本地台账（成功与否都只在用了才记）。
+
+        官方没有可编程的用量查询接口（``/v1/usage`` 全 404），所以这只能是我们自己
+        记的流水账——它是「大概调了多少秒」的参照，**不等于账单金额**。
+        """
+        cloud_cfg = self._cloud_cfg
+        self._cloud_cfg = None
+        if cloud_cfg is None:
+            return
+        used = float(getattr(cloud_cfg, "observed_usage_seconds", 0.0) or 0.0)
+        if used <= 0:
+            return
+        try:
+            from core.app_config import load_preferences, save_preferences
+            prefs = load_preferences()
+            prefs.cloud_asr.accumulated_seconds += used
+            prefs.cloud_asr.last_usage_seconds = used
+            save_preferences(prefs)
+            logger.info("[ASR] 云端用量 +%.2fs（累计 %.2fs）",
+                        used, prefs.cloud_asr.accumulated_seconds)
+        except Exception:
+            logger.debug("[ASR] 记录云端用量失败")
 
     def _on_project_result(self, project) -> None:
         self._win._apply_project(project)

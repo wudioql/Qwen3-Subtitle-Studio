@@ -1,4 +1,4 @@
-"""ui.subtitle_overlay — 播放器字幕预览叠层（QPainter 兼容渲染）
+"""ui.player.subtitle_overlay — 播放器字幕预览叠层（QPainter 兼容渲染）
 
 叠在视频画面（或纯音频的深色底）上方的透明控件，按播放位置实时绘制当前句
 字幕。六档预览模式覆盖十种导出观感，并增加所选模板效果兼容预览：
@@ -27,9 +27,8 @@ from typing import List
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QWidget
 
-from .subtitle_render_policy import (
+from ..subtitle_render_policy import (
     segment_fill_role,
     should_clip_karaoke_sweep,
     should_hide_upcoming_outline,
@@ -226,77 +225,6 @@ def compute_overlay_segments(project, t: float, mode: str) -> List[OverlaySegmen
                 progress=inherited.progress,
             )
     return result
-
-
-class SubtitleOverlay(QWidget):
-    """透明字幕叠层：套用样式设置自绘当前句（见模块 docstring）。"""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self._project = None
-        self._time = 0.0
-        self._mode = "sentence"
-        # 样式（由 PlayerPanel 在打开弹窗保存后刷新）
-        self._ass_style = None          # AssStylePrefs
-        self._word_style = None         # WordHighlightStyle
-        self._karaoke_template = None   # KaraokeTemplate（最多一条）
-        self._k_mode = "kf"
-
-    # ── 外部接口 ─────────────────────────────────────────────
-    def set_project(self, project) -> None:
-        self._project = project
-        self.update()
-
-    def set_time(self, t: float) -> None:
-        self._time = float(t)
-        self.update()
-
-    def set_mode(self, mode: str) -> None:
-        if mode in PREVIEW_MODES:
-            self._mode = mode
-            self.update()
-
-    def mode(self) -> str:
-        return self._mode
-
-    def refresh_styles(self) -> None:
-        """从偏好重读 ASS 样式与逐字高亮样式（弹窗保存后调用）。"""
-        try:
-            from core.app_config import load_preferences
-            prefs = load_preferences()
-            self._ass_style = prefs.ass_style.to_style()
-            st = prefs.style
-            self._word_style = st
-            active = prefs.karaoke_template.to_prefs().effective().templates
-            self._karaoke_template = active[0] if active else None
-            self._k_mode = prefs.export.k_tag_mode or "kf"
-        except Exception:  # noqa: BLE001 — 偏好不可读时用默认观感
-            self._ass_style = None
-            self._word_style = None
-            self._karaoke_template = None
-            self._k_mode = "kf"
-        self.update()
-
-    # ── 绘制 ─────────────────────────────────────────────────
-    def paintEvent(self, event) -> None:  # noqa: ARG002
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-        paint_subtitle_overlay(
-            painter,
-            self.width(),
-            self.height(),
-            self._project,
-            self._time,
-            self._mode,
-            self._ass_style,
-            self._word_style,
-            self._karaoke_template,
-            self._k_mode,
-        )
-        painter.end()
 
 
 def _segment_fill(mode: str, seg: OverlaySegment, primary: QColor,
@@ -550,7 +478,6 @@ def paint_subtitle_overlay(
 
 
 __all__ = [
-    "SubtitleOverlay",
     "compute_overlay_segments",
     "paint_subtitle_overlay",
     "OverlaySegment",

@@ -18,6 +18,8 @@ import tempfile
 from dataclasses import asdict, dataclass, field, fields as _dc_fields, is_dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, get_type_hints
+from .cloud_asr import DEFAULT_BASE_URL as DEFAULT_CLOUD_BASE_URL
+from .cloud_asr import DEFAULT_CLOUD_MODEL
 from .constants import (
     ALIGNER_MODEL_PATH,
     ASR_MODEL_PATH,
@@ -57,6 +59,8 @@ class ASRPreferences:
     context: str = ""
     max_new_tokens: int = 512
     use_cache: bool = True
+    # 识别后端：本地 1.7B（默认，需显存） | 云端 HTTP 接口（省显存，见 core/cloud_asr/）
+    asr_backend: str = "local"       # "local" | "cloud"
     fallback_min_sentence_sec: float = 2.0
     fallback_max_sentence_sec: float = 15.0
     # 分句三段式：标点切 → 短句合(min) → 超长切(max)
@@ -66,6 +70,37 @@ class ASRPreferences:
     max_sentence_sec: float = 8.0        # ← 用户调「单句最大时长(秒)」（0=不限制）
     align_pad_before: float = 0.12   # 与 align_pad_after 对称（声学上下文，产出钳回句界）
     align_pad_after: float = 0.12
+
+
+@dataclass
+class CloudASRPreferences:
+    """云端 ASR（SiliconFlow）偏好——细节见 ``core/cloud_asr/``；跑本地后端时整块用不到。
+
+    仅 save 到已在 gitignore 中的 preferences.json，这与项目现有其余偏好的处境一致；
+    ``api_key`` 因此以明文存在本地配置里，**不要**把该文件复制到任何公开位置。
+
+    ``accumulated_seconds`` 是本地用量台账：官方没有任何可编程的余额/用量查询接口
+    （``/v1/user/info`` 已 410、``/v1/usage`` 全 404），所以只能由客户端自己累加
+    每次调用返回 usage.seconds，给用户一个「大概用了多少」的参照。
+    """
+
+    base_url: str = DEFAULT_CLOUD_BASE_URL
+    api_key: str = ""                 # 空 → 回退环境变量 QSS_SILICONFLOW_API_KEY
+    model: str = DEFAULT_CLOUD_MODEL
+    codec: str = "opus"               # "opus"（推荐：实测等价且小 9 倍） | "wav"
+    timeout_sec: float = 300.0
+    accumulated_seconds: float = 0.0  # 累计平台计费用量（非金额，随时间累加）
+    last_usage_seconds: float = 0.0   # 最近一次的用量（排查用）
+
+    def to_transcribe_config_kwargs(self) -> dict:
+        """转成 CloudASRConfig 关键字（UI 偏好 → 引擎配置）。"""
+        return {
+            "base_url": self.base_url,
+            "api_key": self.api_key,
+            "model": self.model,
+            "codec": self.codec,
+            "timeout_sec": self.timeout_sec,
+        }
 
 
 @dataclass
@@ -198,6 +233,7 @@ class Preferences:
     # version 区分新旧。与工程文件 schema（subs.models.PROJECT_SCHEMA_VERSION）同理。
     version: int = 1
     asr: ASRPreferences = field(default_factory=ASRPreferences)
+    cloud_asr: CloudASRPreferences = field(default_factory=CloudASRPreferences)
     align: AlignPreferences = field(default_factory=AlignPreferences)
     style: StylePreferences = field(default_factory=StylePreferences)
     export: ExportPreferences = field(default_factory=ExportPreferences)
@@ -209,7 +245,7 @@ class Preferences:
     # prefs.player_preview_mode。旧 preferences.json 里它们本就是顶层键，加载时自动
     # 落入字段，无需迁移。）
     ui_theme: str = "dark"                    # "light" | "dark"（与 ui.themes._DEFAULT_THEME 一致）
-    player_preview_mode: str = "sentence"     # 预览字幕模式 key（见 ui.subtitle_overlay.PREVIEW_MODES）
+    player_preview_mode: str = "sentence"     # 预览字幕模式 key（见 ui.player.subtitle_overlay.PREVIEW_MODES）
     extra: Dict[str, Any] = field(default_factory=dict)  # 用户自定义扩展，不做 schema 校验
 
 
@@ -448,6 +484,7 @@ def invalidate_preferences_cache(path: Optional[str | Path] = None) -> None:
 
 __all__: List[str] = [
     "ASRPreferences",
+    "CloudASRPreferences",
     "AlignPreferences",
     "StylePreferences",
     "ExportPreferences",

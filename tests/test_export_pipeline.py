@@ -55,9 +55,6 @@ from subs import (
     write_lrc_file,
 )
 
-pytestmark = pytest.mark.logic
-
-
 # ─────────────────────────────────────────────────────────────
 # 构造测试项目：仿 usable-subtitle-sample/test-short-talk 前两句 + 英文
 # 中文每字 40ms；英文逐词 200ms
@@ -160,7 +157,8 @@ def _count_kf(text: str) -> int:
 # ─────────────────────────────────────────────────────────────
 
 
-def _case_timefmt_roundtrip():
+@pytest.mark.logic
+def test_timefmt_roundtrip():
     for t_s in (0.540, 1.0, 12.345, 61.5, 3661.999, 0.0):
         # SRT
         s = srt_time(t_s)
@@ -182,7 +180,8 @@ def _case_timefmt_roundtrip():
         _assert(abs(back - t_s) < 0.011, f"lrc roundtrip {t_s}: {lrc_stamp} -> {back}")
 
 
-def _case_merge_punct_and_no_text_loss():
+@pytest.mark.logic
+def test_merge_punct_and_no_text_loss():
     # T2「指尖,」合并
     ws = [
         WordTimestamp("指", 1.0, 1.04),
@@ -220,7 +219,8 @@ def _case_merge_punct_and_no_text_loss():
     _assert(back == orig, f"punct merge lost text\n orig={orig!r}\n back={back!r}")
 
 
-def _case_per_word_cues_and_t_segments():
+@pytest.mark.logic
+def test_per_word_cues_and_t_segments():
     # T3 逐词 cue 条数与三段拼回
     from subs.converter import iter_sentence_word_cues as _fn
     proj = _build_project()
@@ -261,7 +261,8 @@ def _case_per_word_cues_and_t_segments():
         _assert(out == s.text, f"ass_t text slice broken:\n  got={out!r}\n  exp={s.text!r}")
 
 
-def _case_srt_vtt_export():
+@pytest.mark.logic
+def test_srt_vtt_export():
     # T5 SRT per_word / per_sentence
     proj = _build_project()
     style = WordHighlightStyle(underline=True)
@@ -285,7 +286,8 @@ def _case_srt_vtt_export():
     _assert(".540" in vtt, "vtt timecode missing dot ms")
 
 
-def _case_ass_strategies_split_and_t():
+@pytest.mark.logic
+def test_ass_strategies_split_and_t():
     # T7 strategy=split：逐字 Dialogue
     proj = _build_project()
     style = WordHighlightStyle(underline=True)
@@ -308,7 +310,8 @@ def _case_ass_strategies_split_and_t():
     _assert(r"\1c&HFFFFFF&" in ass, "ass t mode missing base color restore")
 
 
-def _case_style_switch():
+@pytest.mark.logic
+def test_style_switch():
     proj = _build_project()
     full = WordHighlightStyle(bold=True, italic=True, underline=True, strike=True)
     srt = to_srt(proj, full, mode="per_word")
@@ -325,7 +328,8 @@ def _case_style_switch():
         _assert(tag in ass, f"ass split missing override {tag}")
 
 
-def _case_lrc_enhanced_and_roundtrip():
+@pytest.mark.logic
+def test_lrc_enhanced_and_roundtrip():
     # T10 enhanced 字级标签 + 标准模式无 < >
     proj = _build_project()
     lrc = to_lrc(proj, enhanced=True)
@@ -376,7 +380,8 @@ def _case_lrc_enhanced_and_roundtrip():
         _assert(abs(a.start_time - b.start_time) < 0.050, f"lrc start drift: {a.start_time} vs {b.start_time}")
 
 
-def _case_ass_karaoke():
+@pytest.mark.logic
+def test_ass_karaoke():
     proj = _build_project()
     ass = to_ass_karaoke(proj, k_mode="kf")
     got = _count_ass_dialogues(ass)
@@ -389,7 +394,8 @@ def _case_ass_karaoke():
     _assert("Source Han Sans SC" in ass, "karaoke default style font missing")
 
 
-def _case_ass_karaoke_applied():
+@pytest.mark.logic
+def test_ass_karaoke_applied():
     from subs.karaoke_template import KaraokeTemplate, KaraokeTemplatePrefs
 
     project = _build_project()
@@ -417,7 +423,8 @@ def _case_ass_karaoke_applied():
         to_ass_karaoke_applied(project, template_prefs=no_effect)
 
 
-def _case_fallback_no_word_level():
+@pytest.mark.logic
+def test_fallback_no_word_level():
     proj = _build_project_no_word()
     style = WordHighlightStyle(underline=True)
     srt = to_srt(proj, style, mode="per_word")
@@ -435,7 +442,8 @@ def _case_fallback_no_word_level():
         to_ass_karaoke(proj)
 
 
-def _case_export_special_text_is_escaped_and_roundtrips():
+@pytest.mark.logic
+def test_export_special_text_is_escaped_and_roundtrips():
     """用户正文不能注入 HTML/ASS；字面反斜杠、花括号和真实换行需可逆。"""
     from subs.ass_style import AssStylePrefs
     from subs.subtitle_io import _parse_ass, _parse_srt, _parse_vtt
@@ -473,30 +481,6 @@ def _case_export_special_text_is_escaped_and_roundtrips():
     assert entries[0][2] == text
 
 
-# ── 聚合入口 ──────────────────────────────────────────────────────
-
-def _case_timefmt_and_cue_pack():
-    """时间码与 cue 生成 3 合 1：roundtrip / merge_punct 无文本损失 / 逐字 cue 与 t 段。"""
-    _case_timefmt_roundtrip()
-    _case_merge_punct_and_no_text_loss()
-    _case_per_word_cues_and_t_segments()
-
-
-def _case_export_formats_pack():
-    """多格式导出 4 合 1：SRT/VTT / ASS 两策略 / 样式切换 / LRC 增强往返。"""
-    _case_srt_vtt_export()
-    _case_ass_strategies_split_and_t()
-    _case_style_switch()
-    _case_lrc_enhanced_and_roundtrip()
-
-
-def _case_karaoke_and_fallback_pack():
-    """k-tag 源、应用模板后成品与无字级降级。"""
-    _case_ass_karaoke()
-    _case_ass_karaoke_applied()
-    _case_fallback_no_word_level()
-
-
 # ═════════════════════════════════════════════════════════════
 # Aegisub k-tag / Karaoke Templater 兼容（原 test_ass_karaoke_aegisub.py）
 # ═════════════════════════════════════════════════════════════
@@ -515,7 +499,8 @@ def _sentence() -> Sentence:
         ],
     )
 
-def _case_standard_tags_and_template_placement():
+@pytest.mark.logic
+def test_standard_tags_and_template_placement():
     # ── line uses standard tags and preserves text ─────────────────────────
     sentence = _sentence()
     line = build_karaoke_line_text(
@@ -553,7 +538,8 @@ def _case_standard_tags_and_template_placement():
     assert "Comment:" not in clean_events
 
 
-def _case_media_paths_and_uppercase_k_alias(tmp_path):
+@pytest.mark.logic
+def test_media_paths_and_uppercase_k_alias(tmp_path):
     video = tmp_path / "clip.mp4"
     video.touch()
     sentence = _sentence()
@@ -580,7 +566,8 @@ def _case_media_paths_and_uppercase_k_alias(tmp_path):
     assert "Video File: ?dummy" in audio_ass
 
 
-def _case_punct_no_effect_and_legacy_km_migration():
+@pytest.mark.logic
+def test_punct_no_effect_and_legacy_km_migration():
     # ── punctuation without flag never gets effect ─────────────────────────
     # 即使第三方数据忘记设置 is_punct，Unicode 标点也必须被过滤。
     sentence = Sentence(
@@ -685,20 +672,6 @@ def test_export_path_and_stem_memory():
     win.close()
     print("test_export_path_and_stem_memory PASSED ✔")
 
-
-def test_export_all_formats_pack():
-    """test_export_all_formats_pack：合并 4 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_timefmt_and_cue_pack()
-    _case_export_formats_pack()
-    _case_karaoke_and_fallback_pack()
-    _case_export_special_text_is_escaped_and_roundtrips()
-
-
-def test_ass_karaoke_aegisub_pack(tmp_path):
-    """test_ass_karaoke_aegisub_pack：合并 3 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_standard_tags_and_template_placement()
-    _case_media_paths_and_uppercase_k_alias(tmp_path=tmp_path)
-    _case_punct_no_effect_and_legacy_km_migration()
 
 if __name__ == "__main__":
     import sys

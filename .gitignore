@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.pytest_tmp*/
 .mypy_cache/
 .ruff_cache/
 
@@ -51,6 +52,7 @@ test-*.json
 .idea/
 .vscode/
 *.iml
+.workbuddy/
 .trae/
 
 # ── OS ───────────────────────────────────────

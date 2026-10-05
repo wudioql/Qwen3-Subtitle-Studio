@@ -128,7 +128,7 @@ class SubtitlePreviewMixin:
     @staticmethod
     def _make_coord_provider(ass_style):
         """兼容旧调用；预览与应用后导出共用同一坐标 provider。"""
-        from .karaoke_coordinates import make_karaoke_coord_provider
+        from ..karaoke_coordinates import make_karaoke_coord_provider
 
         return make_karaoke_coord_provider(ass_style)
 

@@ -35,7 +35,7 @@ def _words_of(text: str):
     return merge_punct_into_words(text, raw)
 
 
-def _case_words_content_match_matrix():
+def test_words_content_match_matrix():
     # 健康：中文含标点（标点词豁免比对）
     s = Sentence(text="风掠过指尖。", start_time=0.0, end_time=2.0)
     s.words = _words_of(s.text)
@@ -64,7 +64,7 @@ def _case_words_content_match_matrix():
     print("test_words_content_match_matrix OK ✔")
 
 
-def _case_export_preflight_mismatch_rows():
+def test_export_preflight_mismatch_rows():
     from ui.export_controller import word_level_mismatch_rows
 
     ok = Sentence(text="第一句。", start_time=0.0, end_time=1.0)
@@ -81,7 +81,7 @@ def _case_export_preflight_mismatch_rows():
     assert word_level_mismatch_rows(proj_ok) == []
 
 
-def _case_proportional_fallback_logs_warning():
+def test_proportional_fallback_logs_warning():
     # 构造计数必然失配：句需 6+3=9 纯词，却只给 4 词
     sents = [
         Sentence(text="风掠过指尖的甲。", start_time=0.0, end_time=3.0),
@@ -124,7 +124,7 @@ def _mini_proj() -> SubtitleProject:
     )
 
 
-def _case_view_banner_edit_emit_only_and_undo_chain():
+def test_view_banner_edit_emit_only_and_undo_chain():
     """GUI 闭环：警示条 + emit-only（R1）+ EditWordTimeCommand 撤销链。"""
     from PySide6.QtGui import QUndoStack
     from PySide6.QtWidgets import QApplication
@@ -185,25 +185,6 @@ def _case_view_banner_edit_emit_only_and_undo_chain():
     view2.deleteLater()
     print("test_view_banner_edit_emit_only_and_undo_chain OK ✔")
 
-
-# ── 聚合入口 ──────────────────────────────────────────────────────
-
-def _case_word_guard_logic_pack():
-    """守门纯逻辑 3 合 1：内容一致性矩阵 / 导出预检行号 / 比例回退 WARNING。"""
-    _case_words_content_match_matrix()
-    _case_export_preflight_mismatch_rows()
-    _case_proportional_fallback_logs_warning()
-
-
-def _case_word_guard_view_pack():
-    """GUI 闭环：字级页警示条 + 单元格 emit-only 撤销链。"""
-    _case_view_banner_edit_emit_only_and_undo_chain()
-
-
-def test_word_guard_pack():
-    """test_word_guard_pack：合并 2 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_word_guard_logic_pack()
-    _case_word_guard_view_pack()
 
 if __name__ == "__main__":
     import sys

@@ -75,7 +75,7 @@ def _non_punct(s: Sentence):
 # 1. ja 形态素（粗）→ 逐字/音拍（细）：1:n 插值拆分
 # ─────────────────────────────────────────────────────────────
 
-def _case_seq_align_1n_split_pack():
+def test_seq_align_1n_split():
     # ── ja morpheme split interpolation ─────────────────────────
     sent = Sentence(text="桜の花が咲きました", start_time=0.0, end_time=1.0, language="Japanese")
     # nagisa 形态素 7 词；extract_pure_words 逐字 9 词 → 计数恒不等
@@ -135,7 +135,7 @@ def _case_seq_align_1n_split_pack():
     assert words_content_match(sent)
 
 
-def _case_seq_align_n1_and_cross_boundary():
+def test_seq_align_n1_and_cross_boundary():
     # ── n to 1 merge range ─────────────────────────
     sent = Sentence(text="cannot stop", start_time=0.0, end_time=1.0, language="English")
     aligner = [
@@ -169,7 +169,7 @@ def _case_seq_align_n1_and_cross_boundary():
     assert words_content_match(s1) and words_content_match(s2)
 
 
-def _case_true_mismatch_fallback_and_warning(caplog):
+def test_true_mismatch_fallback_and_warning(caplog):
     def _run_true_mismatch(sent: Sentence) -> None:
         aligner = [
             _w("hello", 0.0, 0.4, "English"),
@@ -193,7 +193,7 @@ def _case_true_mismatch_fallback_and_warning(caplog):
     assert any("比例回退" in r.message for r in caplog.records)
 
 
-def _case_exact_path_unchanged():
+def test_exact_path_unchanged():
     # ── exact path unchanged ─────────────────────────
     sent = Sentence(text="桜が咲く", start_time=0.0, end_time=1.0, language="Japanese")
     expected = extract_pure_words(sent.text)
@@ -210,15 +210,6 @@ def _case_exact_path_unchanged():
     assert got[-1].end_time == aligner[-1].end_time
     assert words_content_match(sent)
 
-
-# ── 聚合入口 ──────────────────────────────────────────────────────
-
-def test_attach_seq_align_pack(caplog):
-    """attach 序列对齐 4 合 1：1:n 切分 / n:1 与跨界 / 真失配回退+警告 / 精确路径不变。"""
-    _case_seq_align_1n_split_pack()
-    _case_seq_align_n1_and_cross_boundary()
-    _case_true_mismatch_fallback_and_warning(caplog)
-    _case_exact_path_unchanged()
 
 # ═════════════════════════════════════════════════════════════
 # 2. 全文重对齐语言分段（原 test_full_align_language_segments.py）
@@ -271,7 +262,7 @@ _ELEVEN_FULL = [
 ]
 
 
-def _case_resolve_segments_grouping_and_eleven_langs():
+def test_resolve_segments_grouping_and_eleven_langs():
     # ── resolve language segments grouping ─────────────────────────
     proj = _mk_project([
         ("第一句。", "zh"), ("第二句。", "zh"),
@@ -300,7 +291,7 @@ def _case_resolve_segments_grouping_and_eleven_langs():
     assert all(len(sents) == 1 for _, sents in segs)
 
 
-def _case_single_path_segments_dispatch_and_backend_lang():
+def test_single_path_segments_dispatch_and_backend_lang():
     # ── single path mixed language segments ─────────────────────────
     proj = _mk_project([
         ("风掠过指尖。", "zh"),
@@ -404,7 +395,7 @@ def _case_single_path_segments_dispatch_and_backend_lang():
         assert all(w.language == expect_lang for w in s.words)
 
 
-def _case_multilang_context_entered_once_not_per_segment():
+def test_multilang_context_entered_once_not_per_segment():
     """多语言分段时 using_mms_aligner / using_aligner 只进一次，不按段反复加载。
 
     用户怀疑「每段对齐都向显存重载模型」。现役 full 路径在段循环外层包
@@ -475,7 +466,7 @@ def _case_multilang_context_entered_once_not_per_segment():
     assert qwen_calls == ["Chinese", "Japanese"]
 
 
-def _case_chunked_path_language_segments_and_lock_restore():
+def test_chunked_path_language_segments_and_lock_restore():
     # ── chunked path language segments and lock restore ─────────────────────────
     # 四句、两种语言交错，时间轴铺满 >300s（会让整媒体切块，但段内各 ≤240s）
     proj = _mk_project([
@@ -512,7 +503,7 @@ def _case_chunked_path_language_segments_and_lock_restore():
     assert [w.text for w in proj.sentences[1].words] == ["桜"]
 
 
-def _case_chunk_overlap_selects_nearest_snapshot_and_preserves_failures():
+def test_chunk_overlap_selects_nearest_snapshot_and_preserves_failures():
     """重叠块候选必须互相独立，并按原句中心选最近块；空产出不清旧数据。"""
     from contextlib import contextmanager
 
@@ -632,7 +623,7 @@ def _make_mock_project() -> SubtitleProject:
     )
 
 
-def _case_dirty_and_project_lock_respect():
+def test_dirty_and_project_lock_respect():
     # ── align dirty only respects lock and clean ─────────────────────────
     project = _make_mock_project()
     assert project.alignable_dirty_indices() == [2]
@@ -676,7 +667,7 @@ def _case_dirty_and_project_lock_respect():
     assert len(project.sentences[1].words) == 3
 
 
-def _case_failed_alignment_is_transactional_and_mms_missing_fails_fast():
+def test_failed_alignment_is_transactional_and_mms_missing_fails_fast():
     old = WordTimestamp(text="旧", start_time=1.0, end_time=1.5)
     project = SubtitleProject(
         audio_path="dummy.wav", source_language="zh", media_duration=3.0,
@@ -730,7 +721,7 @@ def test_align_worker_dirty_early_exit():
 # ═════════════════════════════════════════════════════════════
 # 4. 零时长/塌陷字平滑修复（原 test_zero_duration_repair.py）
 # ═════════════════════════════════════════════════════════════
-def _case_zero_duration_fill_shapes():
+def test_zero_duration_fill_shapes():
     # ── middle zero duration word fills gap ─────────────────────────
     raw = [
         WordTimestamp(text="我", start_time=1.000, end_time=1.200),
@@ -786,7 +777,7 @@ def _case_zero_duration_fill_shapes():
     assert fixed[1].start_time < fixed[2].start_time
 
 
-def _case_short_word_with_gap_fills_gap():
+def test_short_word_with_gap_fills_gap():
     # ── short word with gap fills gap ─────────────────────────
     raw = [
         WordTimestamp(text="前字", start_time=1.000, end_time=1.080),
@@ -851,26 +842,6 @@ def test_align_worker_sentences_all_fail_raises():
         with pytest.raises(RuntimeError, match="未能产出"):
             worker._run_sentences_mode()
 
-
-def test_align_segments_pack():
-    """test_align_segments_pack：合并 5 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_resolve_segments_grouping_and_eleven_langs()
-    _case_single_path_segments_dispatch_and_backend_lang()
-    _case_multilang_context_entered_once_not_per_segment()
-    _case_chunked_path_language_segments_and_lock_restore()
-    _case_chunk_overlap_selects_nearest_snapshot_and_preserves_failures()
-
-
-def test_align_lock_pack():
-    """test_align_lock_pack：合并 2 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_dirty_and_project_lock_respect()
-    _case_failed_alignment_is_transactional_and_mms_missing_fails_fast()
-
-
-def test_align_zero_duration_pack():
-    """test_align_zero_duration_pack：合并 2 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_zero_duration_fill_shapes()
-    _case_short_word_with_gap_fills_gap()
 
 if __name__ == "__main__":
     import sys

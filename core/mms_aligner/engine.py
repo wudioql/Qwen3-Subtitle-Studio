@@ -36,6 +36,28 @@ from .romanize import (
 
 logger = logging.getLogger("core.mms_aligner")
 
+# uroman 构造需解析约 2.7s 的罗马化词典；Uroman 内部表只读、romanize_string 无状态，
+# 与 MMSAligner 实例无绑定关系 → 模块级共享一份，避免每个实例各建一份。
+# 与 _GLOBAL_MMS_ALIGNER 同款无锁写法：调用方是单线程任务，竞态最坏只是多构造一次。
+_UROMAN_SHARED = None   # None=未尝试；False=不可用哨兵；实例=可复用
+
+
+def _build_shared_uroman():
+    """返回模块级共享的 Uroman 实例；不可用时返回 False 哨兵。"""
+    global _UROMAN_SHARED
+    if _UROMAN_SHARED is None:
+        try:
+            import uroman
+            _UROMAN_SHARED = uroman.Uroman()
+        except Exception as e:
+            logger.warning(
+                "[MMSAligner] 导入 uroman 失败（%s），后续词将回退基础转写；"
+                "pip install uroman 可提升罗马化质量", e,
+            )
+            _UROMAN_SHARED = False   # 失败哨兵：不再逐词重复 import
+    return _UROMAN_SHARED
+
+
 class MMSAligner:
     """MMS-300M-FA 多语言歌词强制对齐器 (ONNX 版)。"""
 
@@ -124,15 +146,7 @@ class MMSAligner:
 
     def _get_uroman(self):
         if self._uroman is None:
-            try:
-                import uroman
-                self._uroman = uroman.Uroman()
-            except Exception as e:
-                logger.warning(
-                    "[MMSAligner] 导入 uroman 失败（%s），后续词将回退基础转写；"
-                    "pip install uroman 可提升罗马化质量", e,
-                )
-                self._uroman = False   # 失败哨兵：不再逐词重复 import
+            self._uroman = _build_shared_uroman()
         return self._uroman or None
 
     def _get_session(self):

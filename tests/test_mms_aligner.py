@@ -38,7 +38,7 @@ pytestmark = pytest.mark.logic
 # A. 音乐符号过滤 / 多语言切片 / CTC Trellis（原 test_phase6_mms_aligner.py）
 # ═════════════════════════════════════════════════════════════
 
-def _case_pure_words_and_no_bleeding_attachment():
+def test_pure_words_and_no_bleeding_attachment():
     # ── special symbols and pure words ─────────────────────────
     mixed_text = "♪ 今夜的 moonlight 照亮了 sakura ♪"
     pure = extract_pure_words(mixed_text)
@@ -83,7 +83,7 @@ def _case_pure_words_and_no_bleeding_attachment():
         assert abs(assigned[0].words[i].end_time - assigned[0].words[i + 1].start_time) < 1e-4
 
 
-def _case_ctc_math_pack():
+def test_ctc_math():
     # ── canonical ctc trellis accuracy ─────────────────────────
     num_frames = 250
     vocab = {"<blank>": 0, "a": 4, "b": 20, "c": 23, "d": 16}
@@ -157,7 +157,7 @@ def _case_ctc_math_pack():
     assert abs(res[1].words[0].end_time - res[1].words[1].start_time) < 1e-4
 
 
-def _case_mms_unload_clears_session():
+def test_mms_unload_clears_session():
     """MMSAligner.unload 必须摘掉 _session（ORT 还显存的唯一手段）。"""
     from core.mms_aligner import MMSAligner
 
@@ -169,7 +169,7 @@ def _case_mms_unload_clears_session():
     assert m._session is None
 
 
-def _case_realign_and_ram_residency():
+def test_realign_and_ram_residency():
     # ── mms sentence and dirty realignment ─────────────────────────
     # 1. 模拟 MMS 能够正常对齐单句
     mock_mms = MagicMock()
@@ -241,7 +241,7 @@ def _case_realign_and_ram_residency():
     assert "未加载" in mm.status_text()
 
 
-def _case_model_context_restores_active_aligner():
+def test_model_context_restores_active_aligner():
     """模型上下文执行完不得把用户在工具栏选的后端身份顶掉。
 
     active_aligner = 用户在工具栏选择的后端身份（状态栏显示/路径判断用）；
@@ -284,14 +284,14 @@ def _mk_log_probs(rows):
     return np.log(probs + 1e-12)
 
 
-def _case_pure_tail_no_onset():
+def test_pure_tail_no_onset():
     """纯拖音：blank 主导 + 末字元音偶发重触发 → 不触发哨兵。"""
     rows = [(BLANK, 0.9)] * 10 + [(VOWEL_A, 0.8)] * 3 + [(BLANK, 0.9)] * 10
     lp = _mk_log_probs(rows)
     assert _find_next_content_onset(lp, 0, len(rows), {VOWEL_A}) is None
 
 
-def _case_foreign_peak_detected_and_low_confidence_ignored():
+def test_foreign_peak_detected_and_low_confidence_ignored():
     """后句异质字符峰被检出；低置信杂峰不触发。"""
     rows = ([(BLANK, 0.9)] * 8
             + [(CHAR_N, 0.3)]          # 低置信杂峰（混响/伴奏残留）→ 忽略
@@ -303,7 +303,7 @@ def _case_foreign_peak_detected_and_low_confidence_ignored():
     assert onset == 13, f"应命中第一个高置信异质峰（帧 13），得到 {onset}"
 
 
-def _case_own_token_retrigger_exempt():
+def test_own_token_retrigger_exempt():
     """末字自身 token 重触发（颤音重激发）不算新内容。"""
     rows = [(BLANK, 0.9)] * 5 + [(VOWEL_A, 0.95)] * 4 + [(BLANK, 0.9)] * 5
     lp = _mk_log_probs(rows)
@@ -312,7 +312,7 @@ def _case_own_token_retrigger_exempt():
     assert _find_next_content_onset(lp, 0, len(rows), set()) == 5
 
 
-def _case_probability_threshold_contract():
+def test_probability_threshold_contract():
     """阈值契约：单帧瞬态低置信不触发（防混响残留）；持续低置信触发（抓辅音峰）。
 
     辅音（塞音/擦音）峰短促且置信常在 0.35~0.5——单帧 0.5 高阈会漏检，导致
@@ -338,7 +338,7 @@ def _case_probability_threshold_contract():
     assert _find_next_content_onset(lp, 0, len(rows), set(), min_prob=0.4) == 2
 
 
-def _case_onset_backtracks_to_pronunciation_start():
+def test_onset_backtracks_to_pronunciation_start():
     """命中峰向前回溯到后验爬坡起脚：辅音闭塞/送气段一并让出。
 
     模拟：帧 5-7 为 CHAR_N 后验爬坡段（0.15→0.3→0.45，低于命中线但已在发音），
@@ -364,7 +364,7 @@ def _case_onset_backtracks_to_pronunciation_start():
     assert onset >= 5, f"不应回溯进纯 blank 区，得到 {onset}"
 
 
-def _case_align_last_word_capped_by_onset_not_anchor():
+def test_align_last_word_capped_by_onset_not_anchor():
     """集成：连唱场景末字终点被哨兵截住，不再贴到 tail_limit 锚。
 
     构造 log_probs：末字「拖」元音在帧 [10,14] 触发后转 blank 拖音至帧 40，
@@ -399,7 +399,7 @@ def _case_align_last_word_capped_by_onset_not_anchor():
     assert abs(words[0].end_time - 90 * 0.020) > 0.5, "终点不得贴在 tail_limit 锚上"
 
 
-def _case_align_anchor_dragged_into_next_word_still_cut():
+def test_align_anchor_dragged_into_next_word_still_cut():
     """集成（用户复现的「特定区间」）：锚被拖进后句首字发音中段时仍正确截断。
 
     旧实现哨兵扫描上界用被锚截过的 next_s_f：锚落在 [首字开口, 首字峰] 之间
@@ -432,7 +432,7 @@ def _case_align_anchor_dragged_into_next_word_still_cut():
         f"锚在首字中段时尾音应截在首字开口（帧 41），而非顶到锚（帧 60）；实际帧 {end_frame:.0f}"
 
 
-def _case_align_without_onset_keeps_natural_decay():
+def test_align_without_onset_keeps_natural_decay():
     """集成：无异质峰（正常拖音+衰减）时行为不变——终点由声学衰减决定。"""
     from unittest.mock import patch as _patch
     from core.mms_aligner import MMSAligner
@@ -460,7 +460,7 @@ def _case_align_without_onset_keeps_natural_decay():
     assert 40 <= end_frame <= 60, f"自然衰减场景终点应在帧 50 附近，实际帧 {end_frame:.0f}"
 
 
-def _case_mms_chunk_progress_is_reported():
+def test_mms_chunk_progress_is_reported():
     from core.mms_aligner import MMSAligner
 
     aligner = MMSAligner(model_dir="/nonexistent")
@@ -483,7 +483,7 @@ def _case_mms_chunk_progress_is_reported():
     assert events[-1][0] == events[-1][1]
 
 
-def _case_vocal_features_precomputed_once_per_align():
+def test_vocal_features_precomputed_once_per_align():
     """频谱平坦度/RMS 与词无关，三词对齐也只能整段计算一次。"""
     from core.mms_aligner import MMSAligner
 
@@ -517,24 +517,6 @@ def _case_vocal_features_precomputed_once_per_align():
     assert len(seen_features) == 3 and all(item is features for item in seen_features)
 
 
-# ── 哨兵聚合入口（频谱预计算另有独立回归） ────────────────────
-
-def _case_tail_onset_sentinel_unit_pack():
-    """哨兵单元 5 合 1：纯拖音不触发 / 异质峰命中 / 重触发豁免 / 阈值 / 峰回溯。"""
-    _case_pure_tail_no_onset()
-    _case_foreign_peak_detected_and_low_confidence_ignored()
-    _case_own_token_retrigger_exempt()
-    _case_probability_threshold_contract()
-    _case_onset_backtracks_to_pronunciation_start()
-
-
-def _case_tail_onset_sentinel_align_pack():
-    """哨兵集成 3 合 1：连唱截断不贴锚 / 锚拖进首字中段仍截 / 自然衰减不变。"""
-    _case_align_last_word_capped_by_onset_not_anchor()
-    _case_align_anchor_dragged_into_next_word_still_cut()
-    _case_align_without_onset_keeps_natural_decay()
-
-
 # ═════════════════════════════════════════════════════════════
 # D. 数字拼读展开（原 test_digit_spelling.py）
 # ═════════════════════════════════════════════════════════════
@@ -561,7 +543,7 @@ def _tokens_of(rom: str) -> list:
 # 1. 拉丁语系精确拼写（预折叠 ascii → 结果确定可逐字节钉样）
 # ─────────────────────────────────────────────────────────────
 
-def _case_spelling_tables():
+def test_spelling_tables():
     # ── latin digit spelling exact ─────────────────────────
     assert _mms._romanize_word("2024", "English") == "twozerotwofour"
     assert _mms._romanize_word("2024", "French") == "deuxzerodeuxquatre"
@@ -595,7 +577,7 @@ def _case_spelling_tables():
     assert _mms._romanize_word("hello", "English") == "hello"
 
 
-def test_token_level_pack():
+def test_token_level():
     # ── all eleven languages produce real tokens ─────────────────────────
     cases = [
         ("Chinese", "2024"), ("English", "2024"), ("Cantonese", "2024"),
@@ -619,7 +601,7 @@ def test_token_level_pack():
 # ═════════════════════════════════════════════════════════════
 # E. 日语发音拍（mora）分词与罗马化（原 test_ja_mora_pipeline.py）
 # ═════════════════════════════════════════════════════════════
-def _case_ja_mora_grouping_and_symbol_punct():
+def test_ja_mora_grouping_and_symbol_punct():
     # ── mora 归并 ──
     # 拗音归并：きゃ 整拍（不可拆成 き+ゃ 两拍）
     assert extract_pure_words("きゃっと歩くずっと") == ["きゃ", "っと", "歩", "く", "ず", "っと"]
@@ -644,7 +626,7 @@ def _case_ja_mora_grouping_and_symbol_punct():
     assert extract_pure_words("キム・テヒョン〜") == ["キ", "ム", "テ", "ヒョ", "ン"]
 
 
-def _case_zh_en_ko_regression_unchanged():
+def test_zh_en_ko_regression_unchanged():
     # 中文逐字 / 英文逐词 / 韩语逐音节块：mora 归并不得影响
     assert extract_pure_words("青紫色的风掠过指尖") == [
         "青", "紫", "色", "的", "风", "掠", "过", "指", "尖",
@@ -666,13 +648,14 @@ def _case_zh_en_ko_regression_unchanged():
 # ─────────────────────────────────────────────────────────────
 def _make_aligner():
     """不加载模型，仅注入 uroman，测纯罗马化函数。"""
+    from core.mms_aligner.engine import _build_shared_uroman
+
     a = MMSAligner.__new__(MMSAligner)
-    import uroman
-    a._uroman = uroman.Uroman()
+    a._uroman = _build_shared_uroman()   # 走共享缓存，避免重复付 2.7s 构造开销
     return a
 
 
-def _case_ja_mora_romanization():
+def test_ja_mora_romanization():
     a = _make_aligner()
     assert a._romanize_word("きゃ") == "kya"
     assert a._romanize_word("ちょ") == "cho"
@@ -690,7 +673,7 @@ def _case_ja_mora_romanization():
 # ─────────────────────────────────────────────────────────────
 # 3. merge / attach 计数契约（共享切分 ⇒ attach 精确路径不回退）
 # ─────────────────────────────────────────────────────────────
-def _case_ja_merge_and_attach_contract():
+def test_ja_merge_and_attach_contract():
     # ── merge 计数一致性（含 sanitize 平抑重叠）──
     text = "さよならー、キム・テヒョン〜"
     pure = extract_pure_words(text)
@@ -743,7 +726,7 @@ def _make_k1_aligner():
     return a
 
 
-def _case_k1_pack():
+def test_k1():
     # ── 语言门控与缺失回退（无需 pykakasi）──
     a = _make_k1_aligner()
     # 语言门控：同字形中文项目下仍按拼音（uroman），绝不进 kakasi
@@ -791,24 +774,10 @@ def _case_k1_pack():
     assert seen and all(language == "Japanese" for language in seen)
 
 
-# ── 聚合入口 ──────────────────────────────────────────────────────
-
-def _case_ja_mora_pack():
-    """日语 mora 4 合 1：拍归并与符号标点 / 中英韩回归不变 / 罗马化 / merge+attach 契约。"""
-    _case_ja_mora_grouping_and_symbol_punct()
-    _case_zh_en_ko_regression_unchanged()
-    _case_ja_mora_romanization()
-    _case_ja_merge_and_attach_contract()
-
-
-def test_ja_kanji_reading_pack():
-    """日语汉字 pykakasi 读音路由（K1 组）。"""
-    _case_k1_pack()
-
 # ═════════════════════════════════════════════════════════════
 # F. MMS 单例 / CUDA 回退 / uroman 哨兵
 # ═════════════════════════════════════════════════════════════
-def _case_get_mms_aligner_singleton_keyed_by_device():
+def test_get_mms_aligner_singleton_keyed_by_device():
     import core.mms_aligner.engine as eng
     from core.mms_aligner import get_mms_aligner
 
@@ -826,7 +795,7 @@ def _case_get_mms_aligner_singleton_keyed_by_device():
         eng._GLOBAL_MMS_ALIGNER = saved
 
 
-def _case_mms_cuda_fallback_does_not_permanently_change_device():
+def test_mms_cuda_fallback_does_not_permanently_change_device():
     from core.mms_aligner import MMSAligner
 
     m = MMSAligner(model_dir="/nonexistent-mms", device="cuda")
@@ -837,14 +806,18 @@ def _case_mms_cuda_fallback_does_not_permanently_change_device():
     assert m.session_device == ""
 
 
-def _case_mms_uroman_failure_sets_sentinel(monkeypatch):
+def test_mms_uroman_failure_sets_sentinel(monkeypatch):
     import builtins
 
+    import core.mms_aligner.engine as eng
     from core.mms_aligner import MMSAligner
 
     real_import = builtins.__import__
     m = MMSAligner(model_dir="/nonexistent-mms", device="cpu")
     m._uroman = None
+    # uroman 实例是模块级共享的（构造 2.7s，见 engine._build_shared_uroman）。
+    # 必须先清掉缓存，否则这里会复用到已建好的实例，测不到 import 失败路径。
+    monkeypatch.setattr(eng, "_UROMAN_SHARED", None)
 
     def fail_uroman(name, *args, **kwargs):
         if name == "uroman":
@@ -868,39 +841,6 @@ def _case_mms_uroman_failure_sets_sentinel(monkeypatch):
 
 # ══════════════════════════════════════════════════════════════
 
-
-def test_mms_text_ctc_pack():
-    """test_mms_text_ctc_pack：合并 2 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_pure_words_and_no_bleeding_attachment()
-    _case_ctc_math_pack()
-
-
-def test_mms_session_residency_pack():
-    """test_mms_session_residency_pack：合并 3 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_mms_unload_clears_session()
-    _case_realign_and_ram_residency()
-    _case_model_context_restores_active_aligner()
-
-
-def test_mms_align_runtime_pack():
-    """test_mms_align_runtime_pack：合并 4 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_mms_chunk_progress_is_reported()
-    _case_vocal_features_precomputed_once_per_align()
-    _case_tail_onset_sentinel_unit_pack()
-    _case_tail_onset_sentinel_align_pack()
-
-
-def test_mms_romanization_pack():
-    """test_mms_romanization_pack：合并 2 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_spelling_tables()
-    _case_ja_mora_pack()
-
-
-def test_mms_singleton_pack(monkeypatch):
-    """test_mms_singleton_pack：合并 3 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_get_mms_aligner_singleton_keyed_by_device()
-    _case_mms_cuda_fallback_does_not_permanently_change_device()
-    _case_mms_uroman_failure_sets_sentinel(monkeypatch=monkeypatch)
 
 if __name__ == "__main__":
     import sys

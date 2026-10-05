@@ -8,12 +8,10 @@ from typing import Callable, List, Optional, Tuple
 
 from subs.models import Sentence, SubtitleProject
 
-from .base import _BaseCmd
+from .base import _BaseCmd, _SentenceEdgeCommand
 from .helpers import (
-    _bind_sentence_and_word_edges,
     _find_by_sid,
     _merge_sentences,
-    _resolve_row,
     _split_sentence_at,
     _split_sentence_at_char,
 )
@@ -213,8 +211,12 @@ class MergeSentencesCommand(_BaseCmd):
         return _find_by_sid(self._project, snap.sid)
 
 
-class BoundaryDragCommand(_BaseCmd):
-    """波形拖单句边界（start / end）。"""
+class BoundaryDragCommand(_SentenceEdgeCommand):
+    """波形拖单句边界（start / end；两端各自可为 None = 只拖一端）。
+
+    redo/undo 与 ``EditTimeCommand`` 完全一致，共用 ``_SentenceEdgeCommand`` 状态机；
+    此处只负责把「拖了哪一端」拼进命令文案（撤销栈里可读）。
+    """
 
     def __init__(
         self,
@@ -230,57 +232,7 @@ class BoundaryDragCommand(_BaseCmd):
         if new_end is not None:
             edge.append("end")
         super().__init__(project, on_change, f"拖动 {'/'.join(edge)} S{idx+1}")
-        self._idx = idx
-        # 同 EditTimeCommand，sid 锁定目标句
-        self._sid: int = project.sentences[idx].sid if 0 <= idx < len(project.sentences) else -1
-        self._new_start = new_start
-        self._new_end = new_end
-        self._old_start: float = 0.0
-        self._old_end: float = 0.0
-        self._old_dirty: bool = False
-        self._old_words = None
-        self._new_words = None
-        self._applied_start: float = 0.0
-        self._applied_end: float = 0.0
-        if 0 <= idx < len(project.sentences):
-            self._old_dirty = project.sentences[idx].is_dirty
-
-    def redo(self) -> None:
-        idx = _resolve_row(self._project, self._sid, self._idx)
-        if idx is None:
-            return
-        sent = self._project.sentences[idx]
-        self._old_start = sent.start_time
-        self._old_end = sent.end_time
-        self._old_dirty = sent.is_dirty
-        if self._new_words is None:
-            self._old_words = copy.deepcopy(sent.words)
-            _bind_sentence_and_word_edges(
-                sent, new_start=self._new_start, new_end=self._new_end,
-            )
-            self._applied_start = sent.start_time
-            self._applied_end = sent.end_time
-            self._new_words = copy.deepcopy(sent.words)
-        else:
-            sent.start_time = self._applied_start
-            sent.end_time = self._applied_end
-            sent.words = copy.deepcopy(self._new_words)
-        sent.is_dirty = True
-        self._project.sort()
-        self._notify()
-
-    def undo(self) -> None:
-        idx = _resolve_row(self._project, self._sid, self._idx)
-        if idx is None:
-            return
-        sent = self._project.sentences[idx]
-        sent.start_time = self._old_start
-        sent.end_time = self._old_end
-        if self._old_words is not None:
-            sent.words = copy.deepcopy(self._old_words)
-        sent.is_dirty = self._old_dirty
-        self._project.sort()
-        self._notify()
+        self._init_edge_state(project, idx, new_start, new_end)
 
 
 class StripTrailingPunctCommand(_BaseCmd):

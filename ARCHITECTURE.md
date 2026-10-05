@@ -2,7 +2,7 @@
 
 > **状态**：`verified-current` 表示由当前源码/测试或用户本机实测确认；`implemented-pending` 表示已有代码但尚未在目标环境验收；`unplanned` 表示当前没有明确规划、排期或验收标准。本文只描述当前实现，不把未来方案写成现役组件。
 >
-> **更新基线**：2026-08-30。若本文与代码冲突，以当前代码和测试为准，并在同一变更中修正文档。
+> **更新基线**：2026-10-05。若本文与代码冲突，以当前代码和测试为准，并在同一变更中修正文档。
 
 ## 1. 问题与系统边界
 
@@ -76,17 +76,35 @@ subs/ ──────────→ 标准库/其自身纯字幕模块
 
 ### 4.2 ASR + 对齐
 
+ASR 有**两个可切换的后端**，工具栏「识别后端」即时选择为准：
+
 ```text
 TranscribeWorker
-  ├── core.asr_engine.transcribe()
-  │     ├── FFmpeg/音频准备
-  │     ├── ModelManager.using_asr()
-  │     └── Qwen3-ASR 输出文本
-  ├── Forced Aligner 生成字/词时间
-  └── 按标点聚合 Sentence，返回 SubtitleProject
+  └── core.asr_engine.transcribe()
+        ├── FFmpeg/音频准备
+        ├── 【取文本】二选一
+        │     ├── local（默认）：ModelManager.using_asr() → 本地 Qwen3-ASR 输出文本
+        │     └── cloud      ：core.cloud_asr.transcribe_cloud() → SiliconFlow HTTP 输出文本
+        │                      （完全不碰 model_manager，本地 1.7B 不进显存）
+        ├── Forced Aligner 生成字/词时间   ← 两个后端共用，始终本地
+        └── 按标点聚合 Sentence，返回 SubtitleProject
 ```
 
+`core/asr_engine/` 收 4 个子模块：`config`（TranscribeConfig / 语言短名互转 / 进度上报）、`splitting`（标点保护、硬切、按标点切分）、`sentences`（文本或带时间片段 → Sentence 列表）、`pipeline`（`transcribe` 主流程）。包入口只再导出；`splitting` / `sentences` 由本地与云端两条路径共用。
+
+**关键边界：后端只替换「取文本」这一段，字级时间戳 100% 仍由本地强制对齐器产出。** 云端接口不提供字级时间戳（`response_format=verbose_json` 返回 400），本地对齐器不可替代，因此切换后端不改变时间轴精度。
+
 原生 ASR 文本不直接提供本项目所需的可靠句级时间；默认仍执行一次字/词级对齐，再聚合句级时间。`return_word_timestamps=False` 只影响结果是否保留 words，不把句级时间改成字符数线性分配。
+
+#### 4.2.1 云端后端（SiliconFlow）
+
+- 入口 `core/cloud_asr/`（包，仅标准库）：`__init__` 只再导出；`client`=HTTP 传输与 multipart、`encoding`=上传前编码（OPUS/时长探测）、`language`=语言决议与响应归一化、`facts`=模型能力与计费账本、`types`/`errors`/`constants`=数据类与常量。另有 `core/cloud_models.py`（抓定价页并与账本对账）+ `ui/settings/cloud_asr_tab.py`（设置页）；CLI 探针 `tools/cloud_models_cli.py` 是 `cloud_models` 的薄包装。
+- 装配链：工具栏下拉 → `prefs.asr.asr_backend` → `WorkflowController._prepare_cloud_asr()`（缺 Key 时前置拦截，不浪费一次上传）→ `TranscribeConfig.cloud_asr`。
+- **计费事实来自账单实证，不来自官方标注**：`VERIFIED_FREE_MODELS` / `PAID_MODELS` 是 2026-10-04 真机调用后的费用明细结论。官方**没有**任何可编程的价格或余额查询接口（`/v1/user/info` 已 410，`/v1/billing|usage|credits` 全部 404），运行时无法判断任意模型是否收费，只能依据这份账本。定价页的「免费」标签出现过名不副实的先例（`Qwen/Qwen3-ASR-1.7B` 标注免费但实测扣费），所以三方名单冲突时**以账本为准**（`PAID_MODELS` > `VERIFIED_FREE_MODELS` > 定价页）。
+- 余额不足返回 **402 且不重试**（平台不透支）；429/5xx/网络异常才退避重试。
+- 上传默认 OPUS 32k（实测与 WAV 识别结果逐字一致、体积约 1/9），MP3 会引入错字。
+- 语言决议是三层兜底：模型返回 → 用户显式指定 → 从转写文本按字符脚本反推；都失败才报错（对齐器需要语言，宁可早失败也不要等到对齐阶段炸掉）。
+- 用量台账 `accumulated_seconds` 只是客户端自记的流水账，**不等于账单金额**，官方无对账接口。
 
 ### 4.3 导入字幕/纯文本后对齐
 
@@ -107,15 +125,19 @@ TranscribeWorker
    → atomic_io UTF-8 原子写盘
 ```
 
-播放器由 `ui/player_panel.py` 提供兼容 façade：
+播放器收在 `ui/player/` 包内（2026-10-05 由 `ui/` 根目录收包，包内去掉了冗余的
+`player_` 前缀），由 `ui/player/panel.py` 提供兼容 façade，对外仍从包入口取：
+`from ui.player import PlayerPanel`。
 
-- `player_stage.py`：QVideoSink 视频帧与 QPainter 字幕同画布；
+- `stage.py`：QVideoSink 视频帧与 QPainter 字幕同画布；
 - `subtitle_overlay.py`：六档 Qt 兼容字幕预览；
-- `player_subtitle_preview.py`：导出真源字幕生成与 mpv 字幕轨；
-- `player_qt_runtime.py`：Qt 软解、首帧预卷和播放状态；
-- `player_focus_surface.py`：画面点击/沉浸模式信号汇合；
+- `subtitle_preview.py`：导出真源字幕生成与 mpv 字幕轨；
+- `qt_runtime.py`：Qt 软解、首帧预卷和播放状态；
+- `focus_surface.py`：画面点击/沉浸模式信号汇合；
 - `mpv_backend.py` + `mpv_worker.py`：可选 libmpv 原生调用的唯一入口与 daemon worker；
 - `qt_media.py`：Qt Multimedia 防御性导入的唯一入口。
+
+不属于本簇、仍留在 `ui/` 根的邻居：`karaoke_coordinates.py`、`subtitle_render_policy.py`。
 
 Qt fallback 不使用 `QVideoWidget`，以免原生视频窗口盖住字幕。同一媒体存在 mpv 时，后端路由看 `active_backend`；mpv 初始化、命令和终止都不能阻塞 GUI。
 

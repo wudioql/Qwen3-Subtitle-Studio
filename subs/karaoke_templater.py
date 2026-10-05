@@ -1,4 +1,8 @@
-"""Aegisub Karaoke Templater 的安全 Python 子集。
+"""Aegisub Karaoke Templater 的安全 Python 子集（模板**应用器**）。
+
+⚠️ 勿与 ``subs/karaoke_template.py`` 混淆（两者只差一个 r）：**本模块**把模板
+**应用**到源行、产出 Apply 后的 fx 结构；``karaoke_template`` 是模板本身的
+数据模型与 Comment 行渲染。
 
 把模板 Comment + timed k-tag 源行展开为 Aegisub Apply 后的 ASS 结构：
 - 模板 Comment 保留；

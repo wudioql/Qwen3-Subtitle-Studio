@@ -19,7 +19,7 @@ import pytest
 pytestmark = pytest.mark.ui
 
 
-def _case_ui_toolbar_and_workflow_controller():
+def test_ui_toolbar_and_workflow_controller():
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication(["test"])
 
@@ -66,7 +66,7 @@ def _case_ui_toolbar_and_workflow_controller():
 
 # ═════════════ 面板压缩布局契约 ═════════════
 
-def _case_worker_failure_always_restores_ui():
+def test_worker_failure_always_restores_ui():
     """失败/取消都必须经 finished 统一恢复全部动作和进度。"""
     from unittest.mock import patch
     from PySide6.QtCore import QObject, Signal
@@ -130,7 +130,7 @@ def _case_worker_failure_always_restores_ui():
     finally:
         win.close()
 
-def _case_unsaved_gate_and_media_relink_preserve_subtitles(tmp_path):
+def test_unsaved_gate_and_media_relink_preserve_subtitles(tmp_path):
     from unittest.mock import patch
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication(["test"])
@@ -185,7 +185,7 @@ def _case_unsaved_gate_and_media_relink_preserve_subtitles(tmp_path):
     win.close()
 
 
-def _case_project_embed_and_apply_triple(tmp_path):
+def test_project_embed_and_apply_triple(tmp_path):
     """保存工程嵌入三件套；打开工程应用三件套到偏好并刷新面板。"""
     from types import SimpleNamespace
     from unittest.mock import MagicMock, patch
@@ -253,7 +253,7 @@ def _case_project_embed_and_apply_triple(tmp_path):
     win.close()
 
 
-def _case_style_change_refreshes_subtitle_preview():
+def test_style_change_refreshes_subtitle_preview():
     """样式变更 → 立即写偏好 + 刷新播放器字幕预览（六档预览实时反映）。
 
     覆盖：逐字高亮（checkbox/颜色）、ASS 文字样式（弹窗保存）。
@@ -298,7 +298,7 @@ def _case_style_change_refreshes_subtitle_preview():
     win.close()
 
 
-def _case_strip_trailing_punct_entry(tmp_path):
+def test_strip_trailing_punct_entry(tmp_path):
     """句级字幕「删除句尾标点」按钮：信号驱动全文批量，锁定句跳过，可撤销，不标脏。"""
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication(["test"])
@@ -340,7 +340,7 @@ def _case_strip_trailing_punct_entry(tmp_path):
     win.close()
 
 
-def _case_sniff_project_file(tmp_path):
+def test_sniff_project_file(tmp_path):
     """拖放普通 .json 不得被当作工程（嗅探 schema_version）。"""
     import json
     from ui.project_controller import sniff_project_file
@@ -364,7 +364,7 @@ def _case_sniff_project_file(tmp_path):
     assert sniff_project_file(tmp_path / "missing.json") is False
 
 
-def _case_project_json_drag_and_relink_vocal_path(tmp_path):
+def test_project_json_drag_and_relink_vocal_path(tmp_path):
     from types import SimpleNamespace
     from unittest.mock import MagicMock, patch
     from PySide6.QtWidgets import QApplication
@@ -440,7 +440,7 @@ def _case_project_json_drag_and_relink_vocal_path(tmp_path):
     win.close()
 
 
-def _case_deleted_undo_stack_during_close_is_ignored():
+def test_deleted_undo_stack_during_close_is_ignored():
     """Windows/PySide 析构回归：QUndoStack 已删后不得从 cleanChanged 回调再访问它。"""
     import shiboken6
     from PySide6.QtWidgets import QApplication
@@ -457,7 +457,7 @@ def _case_deleted_undo_stack_during_close_is_ignored():
     win.close()
 
 
-def _case_panel_shrink_layout_pack():
+def test_panel_shrink_layout():
     """压窄防残缺 2 合 1（用户实测回归）：
     1. 句级工具条按钮：视图最小宽度自动计算（六按钮完整文字宽之和），
        压到最小宽度时任何按钮不得被裁（曾裁成「标处拆」式残缺）；
@@ -504,29 +504,279 @@ def _case_panel_shrink_layout_pack():
                     f"W={W} 说明标签被截断: {lbl.text()[:18]}…"
         finally:
             panel.close()
-    print("test_panel_shrink_layout_pack PASSED ✔")
+    print("test_panel_shrink_layout PASSED ✔")
 
 
-def test_toolbar_ui_assembly_pack():
-    """test_toolbar_ui_assembly_pack：合并 4 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_ui_toolbar_and_workflow_controller()
-    _case_worker_failure_always_restores_ui()
-    _case_deleted_undo_stack_during_close_is_ignored()
-    _case_panel_shrink_layout_pack()
+def _widget_in_bar(widget, bar) -> bool:
+    """该控件是否真的摆在 ``bar`` 里。
+
+    用 ``QToolBar.widgetForAction(action)`` 逐个比对——这是 Qt 自己维护的
+    「action → 工具栏控件」映射，是唯一可靠的归属判据。
+
+    三个看起来可行但**都不行**的替代方案（都实测踩过）：
+    - ``widget.parent() is bar``：``addWidget`` 不重设父级，控件是用
+      ``ComboBox(self)`` 建的，父级是 MainWindow；
+    - ``action.defaultWidget()``：返回的是 action 上另外设的默认控件
+      （组合框所在 action 的 defaultWidget 是它前面那个 QLabel）；
+    - 控件几何 ``(x, y)``：两行工具栏坐标各自独立，(0,0) 之类的坐标会撞车。
+    """
+    for act in bar.actions():
+        try:
+            if bar.widgetForAction(act) is widget:
+                return True
+        except (AttributeError, RuntimeError):
+            break
+    return False
 
 
-def test_toolbar_project_flow_pack(tmp_path):
-    """test_toolbar_project_flow_pack：合并 4 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_unsaved_gate_and_media_relink_preserve_subtitles(tmp_path=tmp_path)
-    _case_project_embed_and_apply_triple(tmp_path=tmp_path)
-    _case_sniff_project_file(tmp_path=tmp_path)
-    _case_project_json_drag_and_relink_vocal_path(tmp_path=tmp_path)
+def test_toolbar_is_two_rows_with_vocal_button():
+    """反回归：工具栏必须是**两行**，且「人声提取」夹在导入字幕与识别之间。
+
+    起因（用户实测）：单行放不下——7 个动作按钮 + 3 组「标签+下拉」+ 主题/设置，
+    QToolBar **不会自动换行**，窗口稍窄就把右侧控件直接裁掉。
+    分行原则：第 1 行动作按钮，第 2 行从「识别语言」开始的全部设置类下拉。
+
+    这里同时钉住三条容易回归的契约：
+    1. 两行是**两个独立 QToolBar**（不是把控件塞进同一个）；
+    2. 人声提取独立成组，位置在「导入字幕」右、「识别生成字幕」左；
+    3. 三个下拉的宽度被显式夹住——不夹的话 qfluentwidgets 的 ComboBox 会按
+       最长项文字算 sizeHint，三个加起来近 1000px，行内控件照样被裁。
+    """
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication(["test"])
+    from ui.main_window import MainWindow
+
+    win = MainWindow()
+    try:
+        row1, row2 = win._main_toolbar, win._main_toolbar_settings
+        assert row1 is not row2, "工具栏必须拆成两个 QToolBar"
+        assert row1.objectName() != row2.objectName(), "两行需用不同 objectName 便于 QSS 区分"
+        win.show()
+        QApplication.instance().processEvents()
+
+        # 第 1 行：全部动作按钮（含人声提取）
+        for btn, _act, _icon in win._toolbar_action_items:
+            assert _widget_in_bar(btn, row1), f"动作按钮「{btn.text()}」应在第 1 行"
+            assert not _widget_in_bar(btn, row2), f"「{btn.text()}」不应在第 2 行"
+
+        # 第 2 行：三个设置类下拉 + 主题/设置
+        from ui.main_window.chrome import ChromeMixin
+        for combo in (win._global_lang, win._asr_backend, win._align_backend):
+            assert _widget_in_bar(combo, row2), "设置类下拉应在第 2 行"
+            assert not _widget_in_bar(combo, row1), "设置类下拉不应在第 1 行"
+            # 宽度必须容得下「最长一项文字 + 控件装饰」，而不是某个拍脑袋的定值。
+            # 原断言是 ``maximumWidth() <= 160``，那是在「宁可截断文字也要压窄」
+            # 的旧前提下写的；用户真机反馈「文字显示不全」后已推翻。
+            # 装饰宽度 46px 来自实测：文字墨迹起点恒为 12px、文字区右边界恒为
+            # ``width-34``（详见 chrome.py::_fit_combo 的标定说明）。
+            fm = combo.fontMetrics()
+            need = max(fm.horizontalAdvance(combo.itemText(i))
+                       for i in range(combo.count()))
+            assert combo.minimumWidth() >= need + ChromeMixin._COMBO_CHROME, (
+                f"下拉宽度容不下最长项文字：min={combo.minimumWidth()} "
+                f"< 文字 {need} + 装饰 {ChromeMixin._COMBO_CHROME}")
+            assert combo.minimumWidth() == combo.maximumWidth(), \
+                "定宽下拉的 min/max 应一致（否则 QToolBar 仍可能取到窄值）"
+        for btn in (win._btn_theme, win._btn_settings):
+            assert _widget_in_bar(btn, row2), "主题/设置按钮应在第 2 行"
+
+        # 人声提取位置：导入字幕 < 人声提取 < 识别生成字幕
+        texts = [t[0].text() for t in win._toolbar_action_items]
+        assert "人声提取" in texts, texts
+        assert texts.index("导入字幕") < texts.index("人声提取") < texts.index("识别生成字幕"), texts
+
+        # 启用态随媒体有无联动
+        assert win._act_extract_vocals.isEnabled() is False
+        win.workflow.set_actions_project_state(has_media=True, has_sentences=False)
+        assert win._act_extract_vocals.isEnabled() is True
+    finally:
+        win.close()
 
 
-def test_toolbar_style_punct_pack(tmp_path):
-    """test_toolbar_style_punct_pack：合并 2 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_style_change_refreshes_subtitle_preview()
-    _case_strip_trailing_punct_entry(tmp_path=tmp_path)
+def test_toolbar_rows_not_clipped_at_narrow_width():
+    """两行工具栏在常见宽度下都不得裁控件。
+
+    判据用 ``min(sizeHint, maximumWidth)``：组合框的 sizeHint 是**不加约束**时
+    按最长项文字算出来的自然宽度（实测「☁️ 云端 · SiliconFlow」达 268px），
+    而 ``_fit_combo`` 刻意把它夹到 120~150px。用裸 sizeHint 断言会把
+    「按设计夹窄」误判成「被裁」——真正要防的是**行宽不够导致的截断**。
+    """
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication(["test"])
+    from ui.main_window import MainWindow
+
+    def act_widget(act):
+        for getter in ("widget", "defaultWidget"):
+            g = getattr(act, getter, None)
+            w = g() if callable(g) else None
+            if w is not None:
+                return w
+        return None
+
+    def eff_need(w):
+        mx = w.maximumWidth()
+        hint = w.sizeHint().width()
+        return hint if mx <= 0 else min(hint, mx)
+
+    win = MainWindow()
+    try:
+        for W in (1920, 1366, 1024):
+            win.resize(W, 800)
+            win.show()
+            QApplication.instance().processEvents()
+            for name, bar in (("row1", win._main_toolbar),
+                              ("row2", win._main_toolbar_settings)):
+                need_total = 0
+                for act in bar.actions():
+                    w = act_widget(act)
+                    if w is None:
+                        need_total += 12          # separator
+                        continue
+                    if not w.isVisible():
+                        continue
+                    need = eff_need(w)
+                    need_total += need
+                    assert w.width() + 1 >= need, (
+                        f"W={W} {name} 控件被裁: {w.text()} {w.width()} < {need}")
+                assert need_total <= bar.width() + 4, (
+                    f"W={W} {name} 整行超宽: 需要 {need_total} > 可用 {bar.width()}")
+            win.hide()
+    finally:
+        win.close()
+
+
+def test_toolbar_really_occupies_two_visual_rows():
+    """两个 QToolBar 必须真的落在**不同的 y** 上——即视觉上确实是两行。
+
+    为什么这条不可省（2026-10-04 真机复测）：``QMainWindow.addToolBar`` 是
+    **顺序追加**语义，连续调用两次会把两个工具栏**并排放进同一行**
+    （实测 ``tb.y == tb2.y == 0``），而不是注释里以为的「垂直堆叠」。
+    必须显式调用 ``addToolBarBreak()`` 才会换行（实测 ``y=0`` / ``y=20``）。
+
+    前一条 :func:`test_toolbar_is_two_rows_with_vocal_button` 只用
+    ``widgetForAction`` 验证**控件归属**，那种判据在两行被合并成一行时
+    依然全部成立——所以它一直绿着，而真机看到的是 1 行。
+    判据必须是**几何**（y 坐标不同）。
+    """
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication(["test"])
+    from ui.main_window import MainWindow
+
+    win = MainWindow()
+    try:
+        win.resize(1600, 800)
+        win.show()
+        QApplication.instance().processEvents()
+        y1 = win._main_toolbar.geometry().y()
+        y2 = win._main_toolbar_settings.geometry().y()
+        assert y1 != y2, (
+            f"两个工具栏的 y 相同（{y1}）——它们被合并成同一行了，"
+            "需要 addToolBarBreak() 才能换行"
+        )
+        assert abs(y2 - y1) >= 1, f"两行间距异常：y1={y1}, y2={y2}"
+    finally:
+        win.close()
+
+
+def test_toolbar_combo_renders_every_item_without_truncation():
+    """下拉的**每一项**都必须完整渲染，不被静默裁掉末字。
+
+    判据用 ``grab()`` 取**真实渲染像素**并量墨迹宽度，而不是算公式——
+    前两版测试都因为「公式与实际绘制不符」而和实现一起错、一直绿着。
+
+    实测标定（headless，``grab()`` 逐列扫暗像素）：
+
+    - 文字**左对齐**，墨迹起点恒为 12px，**不随控件宽度变化**；
+    - 文字区右边界恒为 ``width-34``，而箭头画在 ``width-22``
+      →箭头与文字天然留12px 间隙，**箭头压不到文字**；
+    - 所以差几像素不会「被箭头遮挡」，而是 Qt **静默裁掉末字**：
+      「自动检测」advance=56、完整需 102px，而旧实现只给 96px
+      → 实测墨迹只有 52px（= advance - 4），用户看到的就是「显示不全」。
+
+    旧公式 ``width - 11 - 22`` 算成63 >= 56 一路放行，压根抓不到。
+    """
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication(["test"])
+    from ui.main_window import MainWindow
+
+    def _ink_width(combo):
+        """墨迹列宽。**必须与主题无关**：浅色主题文字是深色、深色主题是亮色，
+        只找暗像素会在深色主题下量到 0 而误报「被截断」。
+
+        实现：以控件**背景色**（取四角像素的中位亮度）为基准，
+        统计与背景显著不同的列。
+        """
+        img = combo.grab().toImage()
+        corners = [img.pixelColor(x, y).lightness()
+                   for x, y in ((0, 0), (img.width() - 1, 0),
+                                (0, img.height() - 1),
+                                (img.width() - 1, img.height() - 1))]
+        bg = sorted(corners)[len(corners) // 2]
+        cols = [x
+                for x in range(img.width())
+                for y in range(img.height())
+                if abs(img.pixelColor(x, y).lightness() - bg) > 60]
+        return (max(cols) - min(cols) + 1) if cols else 0
+
+    win = MainWindow()
+    try:
+        win.resize(1920, 800)
+        win.show()
+        QApplication.instance().processEvents()
+        for combo in (win._global_lang, win._asr_backend, win._align_backend):
+            fm = combo.fontMetrics()
+            orig = combo.currentIndex()
+            for i in range(combo.count()):
+                combo.setCurrentIndex(i)
+                QApplication.instance().processEvents()
+                text = combo.itemText(i)
+                # 墨迹宽 < advance 说明末字被裁（末字右侧的 字形边距 约 4px，
+                # 所以完整时应满足 ink >= advance - 4）。
+                ink = _ink_width(combo)
+                assert ink >= fm.horizontalAdvance(text) - 4, (
+                    f"{text!r} 被截断: 实际墨迹宽 {ink} < 需要 "
+                    f"{fm.horizontalAdvance(text)}（控件宽 {combo.width()}）")
+            combo.setCurrentIndex(orig)
+    finally:
+        win.close()
+
+
+def test_toolbar_second_row_is_right_aligned():
+    """第 2 行整体靠右：第一个可视控件的x 明显偏右，不是贴着左边缘。
+
+    用户指定「第2 行希望全都靠右」。原来弹性 spacer 放在中间，只有末尾的
+    「主题/设置」靠右，前面的下拉仍左对齐——现在 spacer 移到最前面。
+    判据用几何（首个控件 x），不靠「属于哪个 toolbar」推断。
+    """
+    from PySide6.QtWidgets import QApplication, QSizePolicy
+    QApplication.instance() or QApplication(["test"])
+    from ui.main_window import MainWindow
+
+    win = MainWindow()
+    try:
+        W = 1600
+        win.resize(W, 800)
+        win.show()
+        QApplication.instance().processEvents()
+        bar = win._main_toolbar_settings
+        # 必须用 bar.widgetForAction：QWidgetAction 自身没有 .widget() 方法
+        # （它只是 action，控件由 QToolBar 侧维护）。
+        vis = []
+        for a in bar.actions():
+            w = bar.widgetForAction(a)
+            if w is None or not w.isVisible():
+                continue
+            # 排除纯弹性占位（spacer 本身 isVisible 为真，且就是最左边那个）
+            if w.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding:
+                continue
+            vis.append(w)
+        assert vis, "第 2 行没有可见控件"
+        first_x = vis[0].mapTo(bar, vis[0].rect().topLeft()).x()
+        # spacer 是 Expanding 的，占掉左侧全部空白；故首个真实控件应贴近右端
+        assert first_x > W * 0.25, (
+            f"第 2 行首个控件 x={first_x}（窗口宽 {W}），看起来仍靠左")
+    finally:
+        win.close()
 
 if __name__ == "__main__":
     import sys

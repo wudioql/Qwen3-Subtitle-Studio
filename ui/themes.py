@@ -125,6 +125,25 @@ QToolBar#main_command_toolbar QLabel {
     font-weight: 500;
     padding: 0 4px;
 }
+/* 第二行（设置类下拉）。与第一行同底色，但去掉下边框——两行紧邻时
+   各自画border-bottom 会在中间多出一道多余的分割线。 */
+QToolBar#main_command_toolbar_settings {
+    background: #1C1C1E;
+    border: 0;
+    padding: 4px 10px 6px 10px;
+    spacing: 6px;
+}
+QToolBar#main_command_toolbar_settings::separator {
+    width: 1px;
+    background: #38383A;
+    margin: 4px;
+}
+QToolBar#main_command_toolbar_settings QLabel {
+    color: #F5F5F7;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 0 4px;
+}
 
 /* ───────────────────────── 底栏与状态栏 ───────────────────────── */
 QStatusBar {
@@ -319,6 +338,24 @@ QToolBar#main_command_toolbar QLabel {
     font-weight: 500;
     padding: 0 4px;
 }
+/* 第二行（设置类下拉）—— 见深色段同名注释 */
+QToolBar#main_command_toolbar_settings {
+    background: #FFFFFF;
+    border: 0;
+    padding: 4px 10px 6px 10px;
+    spacing: 6px;
+}
+QToolBar#main_command_toolbar_settings::separator {
+    width: 1px;
+    background: #E5E5EA;
+    margin: 4px;
+}
+QToolBar#main_command_toolbar_settings QLabel {
+    color: #1C1C1E;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 0 4px;
+}
 
 /* ───────────────────────── 底栏与状态栏 ───────────────────────── */
 QStatusBar {
@@ -443,12 +480,55 @@ def apply_theme(app, dark: bool) -> None:
     外壳 QSS 必须且只能安装在 QApplication 级：若误传入 QWidget（如 MainWindow），
     QSS 会装到窗口级、与启动时的应用级 QSS 双层叠加——首次切换主题时布局被二次
     重算（工具栏变高、按钮变宽）。此处对传入对象做防御性归一，始终作用于全局应用。
+
+    幂等：目标外壳 QSS 已是这一套时**跳过重装**。``QApplication::setStyleSheet``
+    会对**所有存活控件**广播样式变更并逐个重新 polish，代价随全局控件数线性增长
+    （2026-10-05 离屏实测：2751 控件 0.18s、3252 控件 0.58s），而同串重装不改变
+    任何视觉结果。``setTheme``/``_apply_palette`` 实测零成本，仍每次都执行以保证
+    qfluentwidgets 内部状态与调色板跟得上。
     """
     from PySide6.QtWidgets import QApplication
     target = QApplication.instance() or app
     setTheme(Theme.DARK if dark else Theme.LIGHT, lazy=True)
     _apply_palette(target, dark)
-    target.setStyleSheet(_DARK_SHELL_QSS if dark else _LIGHT_SHELL_QSS)
+    qss = _DARK_SHELL_QSS if dark else _LIGHT_SHELL_QSS
+    if target.styleSheet() != qss:
+        target.setStyleSheet(qss)
+
+
+def refresh_widget_style(root) -> None:
+    """对 ``root`` 子树补一次样式 polish——不触碰应用级 QSS，也不广播到其它控件。
+
+    等价于「重装应用级 QSS」在 ``root`` 子树上的那部分效果，但代价只与本子树控件数
+    相关（2026-10-05 实测：~205 个控件约 10~16ms，且**不随全局存活控件数增长**），
+    而 ``QApplication::setStyleSheet`` 是全局广播，代价随全局控件数线性增长。
+
+    用途见 ``ui/main_window/window.py`` 构建末尾：应用级 QSS 若早于控件创建装上，
+    控件「首次 polish」的几何与「re-polish」不一致（实测工具栏 ``sizeHint().height()``
+    停在 35 而非 47），首次切换主题时布局会跳一下。
+
+    三个动作缺一不可，均由实测得出：
+    - ``unpolish`` + ``polish``：清掉该控件的 QSS 规则缓存并重算；
+    - ``QEvent.StyleChange``：QWidget 在此事件里做更新几何/重绘，**少了它几何不收敛**；
+    - ``updateGeometry``：让父布局收到几何失效。
+
+    ⚠️ 陷阱：**自带窗口级 QSS 的控件**（qfluentwidgets 的 ``TableWidget`` /
+    ``TableView``，自身 ``styleSheet()`` 约 1742 字符）调用 Python 侧 ``unpolish``
+    会**必段错误**（已用最小复现验证；保活 style 包装器也崩，与 GC 无关）。这类控件
+    的外观本就由自身 QSS 决定，故只补事件与几何失效，不碰 unpolish。
+    """
+    from PySide6.QtCore import QEvent
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    app = QApplication.instance()
+    for widget in (root, *root.findChildren(QWidget)):
+        if not widget.styleSheet():
+            style = widget.style()
+            style.unpolish(widget)
+            style.polish(widget)
+        if app is not None:
+            app.sendEvent(widget, QEvent(QEvent.Type.StyleChange))
+        widget.updateGeometry()
 
 
 def toggle_theme(app) -> bool:
@@ -484,6 +564,7 @@ from .widgets import GripSplitter, GripSplitterHandle  # noqa: E402,F401
 
 
 __all__ = [
-    "THEME_KEY", "apply_theme", "toggle_theme", "is_dark", "load_theme", "save_theme",
+    "THEME_KEY", "apply_theme", "refresh_widget_style", "toggle_theme", "is_dark",
+    "load_theme", "save_theme",
     "GripSplitter", "GripSplitterHandle",
 ]

@@ -17,7 +17,7 @@ import pytest
 pytestmark = pytest.mark.logic
 
 
-def _case_prefs_nested_unknown_fields_roundtrip(tmp_path):
+def test_prefs_nested_unknown_fields_roundtrip(tmp_path):
     from core.app_config import load_preferences, save_preferences
 
     p = tmp_path / "prefs.json"
@@ -35,7 +35,7 @@ def _case_prefs_nested_unknown_fields_roundtrip(tmp_path):
     assert after["asr"]["source_language"] == "auto"
 
 
-def _case_prefs_cache_isolated_copies_and_save_refresh(tmp_path):
+def test_prefs_cache_isolated_copies_and_save_refresh(tmp_path):
     from core.app_config import (
         Preferences,
         invalidate_preferences_cache,
@@ -67,7 +67,7 @@ def _case_prefs_cache_isolated_copies_and_save_refresh(tmp_path):
     invalidate_preferences_cache()
 
 
-def _case_prefs_cache_keyed_by_path_and_invalidate(tmp_path):
+def test_prefs_cache_keyed_by_path_and_invalidate(tmp_path):
     from core.app_config import (
         Preferences,
         invalidate_preferences_cache,
@@ -95,7 +95,7 @@ def _case_prefs_cache_keyed_by_path_and_invalidate(tmp_path):
     invalidate_preferences_cache()
 
 
-def _case_ensure_temp_dir_creates_nested(tmp_path, monkeypatch):
+def test_ensure_temp_dir_creates_nested(tmp_path, monkeypatch):
     import core.constants as c
 
     nested = tmp_path / "a" / "b"
@@ -104,13 +104,6 @@ def _case_ensure_temp_dir_creates_nested(tmp_path, monkeypatch):
     assert c.ensure_temp_dir() == nested
     assert nested.is_dir()              # parents=True 一次建多级
 
-
-def test_app_config_pack(tmp_path, monkeypatch):
-    """test_app_config_pack：合并 4 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_prefs_nested_unknown_fields_roundtrip(tmp_path=tmp_path)
-    _case_prefs_cache_isolated_copies_and_save_refresh(tmp_path=tmp_path)
-    _case_prefs_cache_keyed_by_path_and_invalidate(tmp_path=tmp_path)
-    _case_ensure_temp_dir_creates_nested(tmp_path=tmp_path, monkeypatch=monkeypatch)
 
 if __name__ == "__main__":
     import sys

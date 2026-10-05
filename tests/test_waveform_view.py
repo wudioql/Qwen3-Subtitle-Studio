@@ -14,7 +14,7 @@ import pytest
 pytestmark = pytest.mark.ui
 
 
-def _case_waveform_wheel_event_zoom_and_pan():
+def test_waveform_wheel_event_zoom_and_pan():
     from PySide6.QtWidgets import QApplication, QGraphicsSceneWheelEvent
     from PySide6.QtCore import Qt, QPointF
     from ui.waveform_view import WaveformView
@@ -66,7 +66,7 @@ def _case_waveform_wheel_event_zoom_and_pan():
     print("test_waveform_wheel_event_zoom_and_pan PASSED ✔")
 
 
-def _case_waveform_public_refresh_api():
+def test_waveform_public_refresh_api():
     """公共 API（active_sentence_index / refresh_sentence_visuals）
 
     main_window 不再戳 _blocks/_handles/_labels/_active_idx 私有成员；这里钉死这两个
@@ -110,7 +110,7 @@ def _case_waveform_public_refresh_api():
     print("test_waveform_public_refresh_api PASSED ✔")
 
 
-def _case_waveform_confirmed_visual_and_preview_word_drag():
+def test_waveform_confirmed_visual_and_preview_word_drag():
     """确认后视觉变化；内部字界拖动只改预览副本，句级手柄承担外边界。"""
     from PySide6.QtGui import QColor
     from PySide6.QtWidgets import QApplication
@@ -165,7 +165,7 @@ def _case_waveform_confirmed_visual_and_preview_word_drag():
     finally:
         view.close()
 
-def _case_coincident_sentence_boundaries_split_by_drag_direction():
+def test_coincident_sentence_boundaries_split_by_drag_direction():
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication(["test"])
     from subs.models import Sentence, SubtitleProject, WordTimestamp
@@ -225,7 +225,7 @@ def _case_coincident_sentence_boundaries_split_by_drag_direction():
         win.close()
 
 
-def _case_time_reorder_keeps_edited_sentence_selected_by_sid():
+def test_time_reorder_keeps_edited_sentence_selected_by_sid():
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication(["test"])
     from subs.models import Sentence, SubtitleProject, WordTimestamp
@@ -267,7 +267,7 @@ def _make_view(duration=100.0):
     return view
 
 
-def _case_follow_playhead_jumps_to_left_20pct():
+def test_follow_playhead_jumps_to_left_20pct():
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication(["test"])
 
@@ -284,7 +284,7 @@ def _case_follow_playhead_jumps_to_left_20pct():
     print("test_follow_playhead_jumps_to_left_20pct PASSED ✔")
 
 
-def _case_follow_playhead_noop_when_visible_and_clamps_at_edges():
+def test_follow_playhead_noop_when_visible_and_clamps_at_edges():
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication(["test"])
 
@@ -318,7 +318,7 @@ def _case_follow_playhead_noop_when_visible_and_clamps_at_edges():
     print("test_follow_playhead_noop_when_visible_and_clamps_at_edges PASSED ✔")
 
 
-def _case_sentence_mode_playback_and_row_click_follow():
+def test_sentence_mode_playback_and_row_click_follow():
     """主窗两条链路：播放推进 / 行号点击，句级模式下光标出视野必须跟随。"""
     from unittest.mock import patch
     from PySide6.QtWidgets import QApplication
@@ -357,21 +357,6 @@ def _case_sentence_mode_playback_and_row_click_follow():
         win.close()
     print("test_sentence_mode_playback_and_row_click_follow PASSED ✔")
 
-
-def test_follow_playhead_pack():
-    """光标跟随 3 合 1：出视野跳左 20% / 视野内不动+头尾钳制 / 播放与行号两链路。"""
-    _case_follow_playhead_jumps_to_left_20pct()
-    _case_follow_playhead_noop_when_visible_and_clamps_at_edges()
-    _case_sentence_mode_playback_and_row_click_follow()
-
-
-def test_waveform_interaction_pack():
-    """test_waveform_interaction_pack：合并 5 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_waveform_wheel_event_zoom_and_pan()
-    _case_waveform_public_refresh_api()
-    _case_waveform_confirmed_visual_and_preview_word_drag()
-    _case_coincident_sentence_boundaries_split_by_drag_direction()
-    _case_time_reorder_keeps_edited_sentence_selected_by_sid()
 
 if __name__ == "__main__":
     import sys

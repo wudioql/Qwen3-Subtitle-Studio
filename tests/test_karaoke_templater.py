@@ -56,7 +56,7 @@ def _dialogues(lines):
     return [line for line in lines if line.startswith("Dialogue:")]
 
 
-def _case_split_syllables_from_k_tag_truth():
+def test_split_syllables_from_k_tag_truth():
     syllables = split_syllables(_sentence("你好世界"))
     assert [item.text for item in syllables] == ["", "你", "好", "世", "界"]
     assert [item.start_ms for item in syllables] == [0, 0, 250, 500, 750]
@@ -64,7 +64,7 @@ def _case_split_syllables_from_k_tag_truth():
     assert [item.index for item in syllables] == [0, 1, 2, 3, 4]
 
 
-def _case_syl_matches_aegisub_shape():
+def test_syl_matches_aegisub_shape():
     template = _form_template(use_pos=True)
     lines = apply_template(_sentence("你好世界"), template, coord_provider=_coord)
     assert len(lines) == 5  # kara[0] 空行 + 4 个真实 syllable
@@ -79,7 +79,7 @@ def _case_syl_matches_aegisub_shape():
     assert r"\pos(100,200)" in lines[0]
 
 
-def _case_line_and_char_semantics():
+def test_line_and_char_semantics():
     line_template = _form_template(template_class="line", use_pos=False)
     line_output = apply_template(_sentence("你好世界"), line_template, coord_provider=_coord)
     assert len(line_output) == 1
@@ -94,7 +94,7 @@ def _case_line_and_char_semantics():
     assert char_output[0].endswith("你")
 
 
-def _case_modifiers_and_safe_expressions():
+def test_modifiers_and_safe_expressions():
     sentence = Sentence(
         text=" 你好世界",
         start_time=0.0,
@@ -141,7 +141,7 @@ def _case_modifiers_and_safe_expressions():
         apply_template(_sentence("你好世界"), lua, coord_provider=_coord)
 
 
-def _case_punctuation_stays_in_place_without_template_effects():
+def test_punctuation_stays_in_place_without_template_effects():
     sentence = Sentence(
         text="你好，world!",
         start_time=0.0,
@@ -180,7 +180,7 @@ def _case_punctuation_stays_in_place_without_template_effects():
     assert r"\t(700,900,\fscx100\fscy100)" in world_line
 
 
-def _case_project_document_matches_apply_structure():
+def test_project_document_matches_apply_structure():
     project = SubtitleProject(
         source_media_path="clip.mp4",
         sentences=[_sentence("你好世界")],
@@ -206,7 +206,7 @@ def _case_project_document_matches_apply_structure():
     assert source_pos < fx_pos  # 原 Comment 保持在前，生成 fx 追加到 Events 尾部
 
 
-def _case_qss_golden_shape_without_reference_asset():
+def test_qss_golden_shape_without_reference_asset():
     import json
 
     from subs.ass_style import AssStylePrefs
@@ -260,7 +260,7 @@ def _case_qss_golden_shape_without_reference_asset():
     assert all(r"\alpha&HFF&" not in line for line in templated_fx)
 
 
-def _case_missing_word_level_is_explicit_error():
+def test_missing_word_level_is_explicit_error():
     project = SubtitleProject(sentences=[
         _sentence("你好世界"),
         Sentence(text="无字级", start_time=2.0, end_time=3.0),
@@ -269,12 +269,3 @@ def _case_missing_word_level_is_explicit_error():
         apply_template_to_project(project, _form_template())
 
 
-def test_karaoke_templater_pack():
-    _case_split_syllables_from_k_tag_truth()
-    _case_syl_matches_aegisub_shape()
-    _case_line_and_char_semantics()
-    _case_modifiers_and_safe_expressions()
-    _case_punctuation_stays_in_place_without_template_effects()
-    _case_project_document_matches_apply_structure()
-    _case_qss_golden_shape_without_reference_asset()
-    _case_missing_word_level_is_explicit_error()

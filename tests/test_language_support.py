@@ -94,7 +94,7 @@ def test_language_upstream_set_and_ui_sync():
     assert name_to_code("auto") == "auto"
 
 
-def _case_asr_language_guard():
+def test_asr_language_guard():
     import torch
 
     from core import asr_engine
@@ -114,8 +114,11 @@ def _case_asr_language_guard():
     mm = MagicMock()
     mm.using_asr.return_value.__enter__.return_value = (proc, model)
 
+    # 补丁打在 .pipeline 上：transcribe 本体住在 core.asr_engine.pipeline，
+    # 它按 pipeline.__dict__ 解析 prepare_audio / align_full_text；
+    # patch.object(asr_engine, …) 只改包入口那份再导出的引用，调用点看不见。
     with patch.object(
-        asr_engine, "prepare_audio",
+        asr_engine.pipeline, "prepare_audio",
         return_value=("/tmp/x.wav", SimpleNamespace(duration=5.0, sample_rate=16000)),
     ):
         with pytest.raises(ValueError, match="11 种语言"):
@@ -136,16 +139,16 @@ def _case_asr_language_guard():
 
     # 守卫之后即返回（不真跑对齐）：用 align_full_text 抛哨兵异常证明已越过语言守卫
     with patch.object(
-        asr_engine, "prepare_audio",
+        asr_engine.pipeline, "prepare_audio",
         return_value=("/tmp/x.wav", SimpleNamespace(duration=5.0, sample_rate=16000)),
     ), patch.object(
-        asr_engine, "align_full_text", side_effect=RuntimeError("SENTINEL_PASSED_GUARD"),
+        asr_engine.pipeline, "align_full_text", side_effect=RuntimeError("SENTINEL_PASSED_GUARD"),
     ):
         with pytest.raises(RuntimeError, match="SENTINEL_PASSED_GUARD"):
             asr_engine.transcribe("/tmp/dummy.mp3", model_manager=mm2, cfg=TranscribeConfig())
 
 
-def _case_sentence_language_priority_over_project():
+def test_sentence_language_priority_over_project():
     from core.align_engine import _infer_full_language
 
     assert _infer_full_language("auto", "ja", "zh") == "Japanese"
@@ -197,7 +200,7 @@ def _case_sentence_language_priority_over_project():
 # 2. Qwen 分词依赖预检
 # ══════════════════════════════════════════════════════════════
 
-def _case_segmenter_dependency_pure_logic_and_backend_gating():
+def test_segmenter_dependency_pure_logic_and_backend_gating():
     # ── check segmenter dependency pure ─────────────────────────
     with _HAS_SPEC:
         assert check_segmenter_dependency("Japanese") is None
@@ -222,7 +225,7 @@ def _case_segmenter_dependency_pure_logic_and_backend_gating():
         assert "soynlp" in str(exc_info.value)                          # 多语言一次报全
 
 
-def _case_segmenter_fail_fast_all_entry_points():
+def test_segmenter_fail_fast_all_entry_points():
     # ── align project fail fast before loading ─────────────────────────
     proj = _ja_project()
     mm = MagicMock()
@@ -256,7 +259,7 @@ def _case_segmenter_fail_fast_all_entry_points():
             align_sentence(sent, audio, 16000, model_manager=MagicMock(), cfg=AlignConfig())
 
 
-def _case_segmenter_mms_unaffected():
+def test_segmenter_mms_unaffected():
     # ── mms backend not blocked by preflight ─────────────────────────
     proj = _ja_project()
     audio = np.zeros(16000 * 3, dtype=np.float32)
@@ -283,18 +286,6 @@ def _case_segmenter_mms_unaffected():
     assert got == ["桜", "咲", "く"]
     assert all(w.language == "Japanese" for w in proj.sentences[0].words)
 
-
-def test_asr_language_pack():
-    """test_asr_language_pack：合并 2 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_asr_language_guard()
-    _case_sentence_language_priority_over_project()
-
-
-def test_segmenter_deps_pack():
-    """test_segmenter_deps_pack：合并 3 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_segmenter_dependency_pure_logic_and_backend_gating()
-    _case_segmenter_fail_fast_all_entry_points()
-    _case_segmenter_mms_unaffected()
 
 if __name__ == "__main__":
     import sys

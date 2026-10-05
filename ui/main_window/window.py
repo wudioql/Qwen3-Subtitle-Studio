@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QMainWindow, QMessageBox, QVBoxLayout, QWidget
 
 from subs.models import SubtitleProject
 from core.model_manager import ModelManager
-from ui.player_panel import PlayerPanel
+from ui.player import PlayerPanel
 from ui.widgets import GripSplitter
 from ui.waveform_view import WaveformView
 from ui.subs_editor import SubsEditor
@@ -78,18 +78,25 @@ class MainWindow(
         # 恢复工具栏「识别语言 / 对齐后端」上次选择
         self._load_toolbar_prefs()
 
-        from ui.themes import apply_theme, is_dark
+        from ui.themes import apply_theme, is_dark, refresh_widget_style
         if hasattr(self, "waveform"):
             self.waveform.set_theme(is_dark())
 
-        # 全部控件构建完成后重新应用一次当前主题：应用级 QSS 若早于控件创建装上，
+        # 全部控件构建完成后补一次 polish：应用级 QSS 若早于控件创建装上，
         # 首次 polish 的几何（工具栏高度/按钮 padding）与后续 re-polish 不一致，
         # 表现为「第一次切换主题时布局跳一下」。此处主动补一次 polish，
         # 首帧即进入稳定几何，之后任意次主题切换布局零变化。
+        #
+        # apply_theme 已幂等（外壳 QSS 未变则跳过重装），因此「重装应用级 QSS」
+        # 这条全局广播路径只在首次构建时走一次；本窗口自己的 polish 由
+        # refresh_widget_style 补齐。若改回无条件 apply_theme，每次 MainWindow()
+        # 都会广播到**全部存活控件**，代价随存活数线性增长（实测 3000+ 控件时
+        # 单次 0.6s）——全量测试因此从 O(N) 退化为 O(N²)。
         from PySide6.QtWidgets import QApplication
         _app = QApplication.instance()
         if _app is not None:
             apply_theme(_app, is_dark())
+        refresh_widget_style(self)
 
 
     @property

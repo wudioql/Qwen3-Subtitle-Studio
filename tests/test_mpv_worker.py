@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from ui.mpv_worker import MpvWorker
+from ui.player import MpvWorker
 
 pytestmark = pytest.mark.logic
 
@@ -72,7 +72,7 @@ def test_shutdown_never_joins_hung_native_terminate():
 
 def test_native_mpv_host_is_isolated_before_creating_hwnd():
     """防止 HWND 原生属性扩散到 Fluent ComboBox，导致 Popup transient 警告。"""
-    backend_source = (PROJECT_ROOT / "ui" / "mpv_backend.py").read_text(encoding="utf-8")
+    backend_source = (PROJECT_ROOT / "ui" / "player" / "mpv_backend.py").read_text(encoding="utf-8")
     dont_ancestors = backend_source.index("WA_DontCreateNativeAncestors")
     make_native = backend_source.index("WA_NativeWindow", dont_ancestors)
     assert dont_ancestors < make_native
@@ -84,7 +84,7 @@ def test_native_mpv_host_is_isolated_before_creating_hwnd():
     assert '@player.on_key_press("MOUSE_BTN0")' in backend_source
     assert "self._bridge.surface_clicked" in backend_source
 
-    panel_source = (PROJECT_ROOT / "ui" / "player_panel.py").read_text(encoding="utf-8")
+    panel_source = (PROJECT_ROOT / "ui" / "player" / "panel.py").read_text(encoding="utf-8")
     assert "on_surface_click=self._request_focus_mode_toggle" in panel_source
 
     main_source = (PROJECT_ROOT / "main.py").read_text(encoding="utf-8")
@@ -95,7 +95,7 @@ def test_native_mpv_host_is_isolated_before_creating_hwnd():
 
 def test_subtitle_replacement_requests_nonfatal_current_frame_redraw():
     """保存模板后即使 mpv 正暂停，也必须让 libass 立刻重算当前帧。"""
-    source = (PROJECT_ROOT / "ui" / "mpv_backend.py").read_text(encoding="utf-8")
+    source = (PROJECT_ROOT / "ui" / "player" / "mpv_backend.py").read_text(encoding="utf-8")
     assign_track = source.index("self._subtitle_track_id = parsed_id")
     redraw_call = source.index("self._request_subtitle_redraw(player)", assign_track)
     redraw_method = source.index("def _request_subtitle_redraw", redraw_call)
@@ -110,21 +110,26 @@ def test_subtitle_replacement_requests_nonfatal_current_frame_redraw():
 
 def test_player_panel_stable_subdomains_are_split_behind_facade():
     """大面板拆分后旧导入名不变，stage/字幕管线/Qt runtime 各自单一职责。"""
-    panel_path = PROJECT_ROOT / "ui" / "player_panel.py"
+    panel_path = PROJECT_ROOT / "ui" / "player" / "panel.py"
     panel_source = panel_path.read_text(encoding="utf-8")
-    stage_source = (PROJECT_ROOT / "ui" / "player_stage.py").read_text(encoding="utf-8")
+    stage_source = (PROJECT_ROOT / "ui" / "player" / "stage.py").read_text(encoding="utf-8")
     preview_source = (
-        PROJECT_ROOT / "ui" / "player_subtitle_preview.py"
+        PROJECT_ROOT / "ui" / "player" / "subtitle_preview.py"
     ).read_text(encoding="utf-8")
-    qt_source = (PROJECT_ROOT / "ui" / "player_qt_runtime.py").read_text(encoding="utf-8")
-    media_source = (PROJECT_ROOT / "ui" / "qt_media.py").read_text(encoding="utf-8")
+    qt_source = (PROJECT_ROOT / "ui" / "player" / "qt_runtime.py").read_text(encoding="utf-8")
+    media_source = (PROJECT_ROOT / "ui" / "player" / "qt_media.py").read_text(encoding="utf-8")
     surface_source = (
-        PROJECT_ROOT / "ui" / "player_focus_surface.py"
+        PROJECT_ROOT / "ui" / "player" / "focus_surface.py"
     ).read_text(encoding="utf-8")
+
+    # 行为断言（替代原先的源码字符串匹配）：panel 的 façade 名与 stage 里定义的必须是
+    # **同一个类对象**——字符串匹配在「拆出去了却没接回来」时依然会通过。
+    import ui.player.panel as panel_mod
+    import ui.player.stage as stage_mod
 
     assert len(panel_source.splitlines()) < 500
     assert "class _VideoSubtitleStage" not in panel_source
-    assert "from .player_stage import _VideoSubtitleStage" in panel_source
+    assert panel_mod._VideoSubtitleStage is stage_mod._VideoSubtitleStage
     assert "class _VideoSubtitleStage" in stage_source
     assert "class SubtitlePreviewMixin" in preview_source
     assert "class QtPlaybackRuntimeMixin" in qt_source
@@ -143,7 +148,7 @@ def test_player_panel_stable_subdomains_are_split_behind_facade():
         "class PlayerPanel(PlayerFocusSurfaceMixin, SubtitlePreviewMixin, "
         "QtPlaybackRuntimeMixin, QWidget)" in panel_source
     )
-    assert '__all__ = ["PlayerPanel", "_VideoSubtitleStage"]' in panel_source
+    assert panel_mod.__all__ == ["PlayerPanel", "_VideoSubtitleStage"]
 
 
 def test_player_focus_mode_hides_siblings_without_reparenting_native_host():
@@ -161,9 +166,9 @@ def test_player_focus_mode_hides_siblings_without_reparenting_native_host():
     assert ".setParent(" not in source and "reparent" not in source.lower()
     assert "Qt.Key.Key_Escape" in source
 
-    panel_source = (PROJECT_ROOT / "ui" / "player_panel.py").read_text(encoding="utf-8")
+    panel_source = (PROJECT_ROOT / "ui" / "player" / "panel.py").read_text(encoding="utf-8")
     surface_source = (
-        PROJECT_ROOT / "ui" / "player_focus_surface.py"
+        PROJECT_ROOT / "ui" / "player" / "focus_surface.py"
     ).read_text(encoding="utf-8")
     assert "preview_bar.addStretch(1)" in panel_source
     assert "bar.addStretch(1)" in surface_source
@@ -172,7 +177,7 @@ def test_player_focus_mode_hides_siblings_without_reparenting_native_host():
 
 
 def test_qt_pause_silences_audio_before_backend_pause_and_restores_on_play():
-    panel_source = (PROJECT_ROOT / "ui" / "player_panel.py").read_text(encoding="utf-8")
+    panel_source = (PROJECT_ROOT / "ui" / "player" / "panel.py").read_text(encoding="utf-8")
     pause_start = panel_source.index("def pause(self)")
     pause_end = panel_source.index("def stop(self)", pause_start)
     pause_body = panel_source[pause_start:pause_end]
@@ -186,7 +191,7 @@ def test_qt_pause_silences_audio_before_backend_pause_and_restores_on_play():
         "self._player.play()"
     )
 
-    qt_source = (PROJECT_ROOT / "ui" / "player_qt_runtime.py").read_text(encoding="utf-8")
+    qt_source = (PROJECT_ROOT / "ui" / "player" / "qt_runtime.py").read_text(encoding="utf-8")
     assert "def _silence_qt_pause_buffer" in qt_source
     assert "def _restore_qt_pause_audio" in qt_source
     assert "was_priming = self._priming or self._stage._prime_hold" in qt_source
@@ -194,8 +199,8 @@ def test_qt_pause_silences_audio_before_backend_pause_and_restores_on_play():
 
 def test_content_edits_rebuild_current_qt_and_mpv_subtitle():
     """正文/时间 UndoCommand 的 on_change 必须同时刷新当前 Qt 缓存和 mpv 轨。"""
-    player_source = (PROJECT_ROOT / "ui" / "player_panel.py").read_text(encoding="utf-8")
-    stage_source = (PROJECT_ROOT / "ui" / "player_stage.py").read_text(encoding="utf-8")
+    player_source = (PROJECT_ROOT / "ui" / "player" / "panel.py").read_text(encoding="utf-8")
+    stage_source = (PROJECT_ROOT / "ui" / "player" / "stage.py").read_text(encoding="utf-8")
     cache_start = stage_source.index("def refresh_content")
     cache_end = stage_source.index("def set_time", cache_start)
     cache_method = stage_source[cache_start:cache_end]

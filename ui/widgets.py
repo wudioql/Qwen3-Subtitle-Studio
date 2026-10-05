@@ -1,6 +1,8 @@
-"""ui.widgets — 通用自绘/增强控件
+"""ui.widgets — 通用自绘/增强控件与轻量 UI 工厂
 
-当前内容：自绘分割条（GripSplitter / GripSplitterHandle）。
+当前内容：
+- 自绘分割条（`GripSplitter` / `GripSplitterHandle`）；
+- `hint_label`：设置页通用说明标签（拆包后由多处分包共用的唯一实现）。
 
 为什么自绘：仅靠 QSS「提亮把手颜色 + 6px 尺寸」在深色模式下仍几乎不可见——
 QSS 的 QSplitter::handle 规则在部分平台样式引擎下会被忽略，且纯色把手与
@@ -14,10 +16,21 @@ from __future__ import annotations
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QSplitter, QSplitterHandle
-from qfluentwidgets import isDarkTheme
+from qfluentwidgets import CaptionLabel, isDarkTheme
 
 # 主题强调色与 themes._ACCENT 同值；不反向 import themes（避免 themes ↔ widgets 循环）
 _ACCENT = "#4F7DFF"
+
+
+def hint_label(text: str) -> CaptionLabel:
+    """设置页通用说明标签：``CaptionLabel`` + 自动换行。
+
+    原先是 ``ui/settings_dialog.py`` 与 ``ui/settings/cloud_asr_tab.py`` 各一份
+    **逐字相同**的模块私有 ``_hint``——拆包之后两份会各自漂移，故下沉到这里作唯一实现。
+    """
+    label = CaptionLabel(text)
+    label.setWordWrap(True)
+    return label
 
 
 def _grip_colors(dark: bool, hover: bool, pressed: bool) -> tuple[QColor, QColor]:
@@ -106,4 +119,4 @@ class GripSplitter(QSplitter):
         return GripSplitterHandle(self.orientation(), self)
 
 
-__all__ = ["GripSplitter", "GripSplitterHandle"]
+__all__ = ["GripSplitter", "GripSplitterHandle", "hint_label"]

@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 
 from _bootstrap import PROJECT_ROOT  # noqa: F401  (直跑三件套：sys.path / Qt 离屏 / 偏好隔离)
 
@@ -21,17 +22,23 @@ import pytest
 from subs.models import WordTimestamp, Sentence, SubtitleProject  # noqa: E402
 
 
-def _case_constants_and_core_import_smoke():
+@pytest.mark.logic
+def test_constants_and_core_import_smoke():
     assert ASR_MAX_DURATION == 1200.0
     assert ALIGNER_MAX_DURATION == 300.0
     import importlib
+    core_dir = (Path(PROJECT_ROOT) / "core").resolve()
     for _mod in ("model_manager", "asr_engine", "align_engine", "audio_io",
                  "constants", "language_utils"):
         m = importlib.import_module(f"core.{_mod}")
-        assert m.__name__ == f"core.{_mod}"
+        # 必须是本项目的 core/ 落地文件——挡住同名第三方包遮蔽、包名拼写错误，
+        # 以及被其它测试塞进 sys.modules 的桩模块（`m.__name__ == "core.X"` 那种
+        # 断言恒真，等于没测）。
+        assert core_dir in Path(m.__file__).resolve().parents, m.__file__
 
 
-def _case_models_serialization_roundtrip():
+@pytest.mark.logic
+def test_models_serialization_roundtrip():
     w1 = WordTimestamp(text="你", start_time=0.0, end_time=0.15, language="Chinese")
     w2 = WordTimestamp(text="好", start_time=0.15, end_time=0.3, language="Chinese")
     s1 = Sentence(text="你好。", start_time=0.0, end_time=0.3, words=[w1, w2], language="Chinese")
@@ -41,7 +48,8 @@ def _case_models_serialization_roundtrip():
     assert p2.sentences[0].words[0].text == "你"
 
 
-def _case_core_logic_contracts():
+@pytest.mark.logic
+def test_core_logic_contracts():
     # ModelManager 初始化状态
     from core.model_manager import ModelManager
     mm = ModelManager()
@@ -79,7 +87,8 @@ _WORDS_SAMPLE = [
 ]
 
 
-def _case_words_to_sentences_merge_and_split():
+@pytest.mark.logic
+def test_words_to_sentences_merge_and_split():
     from core.asr_engine import TranscribeConfig, _words_to_sentences
     # 默认门槛：短句合并成 1 句
     sents = _words_to_sentences(_WORDS_SAMPLE, cfg=TranscribeConfig(), project_language="Chinese")
@@ -94,7 +103,8 @@ def _case_words_to_sentences_merge_and_split():
     assert sents2[0].text == "你好。" and sents2[1].text.startswith("今天天气不错")
 
 
-def _case_workers_signal_contract():
+@pytest.mark.logic
+def test_workers_signal_contract():
     from workers import TranscribeWorker, AlignWorker
     for _cls, _signals in (
         (TranscribeWorker, ("progress", "project", "failed", "cancelled", "finished_ok", "log")),
@@ -105,11 +115,11 @@ def _case_workers_signal_contract():
 
 
 @pytest.mark.ui
-def _case_ui_mainwindow_editor_contract():
+def test_ui_mainwindow_editor_contract():
     from PySide6.QtWidgets import QApplication
     if QApplication.instance() is None:
         QApplication([])
-    from ui.player_panel import PlayerPanel
+    from ui.player import PlayerPanel
     from ui.waveform_view import WaveformView
     from ui.subs_editor import SubsEditor
     from ui.main_window import MainWindow
@@ -159,7 +169,8 @@ def _case_ui_mainwindow_editor_contract():
         editor.close()
 
 
-def _case_model_reactivation_reports_indeterminate_stage():
+@pytest.mark.logic
+def test_model_reactivation_reports_indeterminate_stage():
     from unittest.mock import MagicMock
     from core.model_manager import ModelManager
 
@@ -173,24 +184,6 @@ def _case_model_reactivation_reports_indeterminate_stage():
     assert any(done == total == 0 and "RAM" in text for done, total, text in events)
     assert manager.asr_state == "in_ram"  # context 退出自动 park
 
-
-# ── 聚合入口 ──────────────────────────────────────────────────────
-
-@pytest.mark.logic
-def _case_core_smoke_pack():
-    """核心冒烟 5 合 1：常量与 import / 模型序列化 / 核心契约 / 分句合并 / worker 信号。"""
-    _case_constants_and_core_import_smoke()
-    _case_models_serialization_roundtrip()
-    _case_core_logic_contracts()
-    _case_words_to_sentences_merge_and_split()
-    _case_workers_signal_contract()
-
-
-def test_app_smoke_pack():
-    """test_app_smoke_pack：合并 3 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_ui_mainwindow_editor_contract()
-    _case_model_reactivation_reports_indeterminate_stage()
-    _case_core_smoke_pack()
 
 if __name__ == "__main__":
     import sys

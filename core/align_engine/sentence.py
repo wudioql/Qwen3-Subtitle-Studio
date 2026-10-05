@@ -1,4 +1,8 @@
-"""core.align_engine.sentence — 单句对齐（Qwen / MMS / 超长子切）。"""
+"""core.align_engine.sentence — 单句对齐（Qwen / MMS / 超长子切）。
+
+⚠️ 勿与 ``core/asr_engine/sentences.py`` 混淆（单复数相对、职责不同）：
+**本模块**做**单句的对齐**；``asr_engine/sentences`` 是 ASR 侧的句子组装。
+"""
 from __future__ import annotations
 
 import logging
@@ -222,9 +226,18 @@ def align_sentence(
             model_manager.using_mms_aligner(progress_cb=cfg.progress_cb)
             if owns_mms_ctx else None
         )
-        if mms_ctx is not None:
-            mms = mms_ctx.__enter__()
         try:
+            # __enter__ **必须在 try 之内**。
+            # 它内部是「先自增 _mms_ctx_depth → 再 get_mms_aligner()」，而后者可能抛
+            # （权重缺失 / ORT 初始化失败 / CUDA EP 崩）。原先写在外面时，一旦
+            # __enter__ 半途失败，__exit__ 就永远不会执行：
+            #   · depth 永久停在 ≥1 → 之后每次 align_sentence 都判定「外层已持有
+            #     上下文」而不再自管，ORT Session 从此再也不卸载
+            #     （直接违反 AGENTS.md §3「MMS 任务结束销毁 ONNX Session」）；
+            #   · mms_aligner_state 卡在 loading、active_aligner 卡在 mms，
+            #     状态栏一直显示错误的后端。
+            if mms_ctx is not None:
+                mms = mms_ctx.__enter__()
             if use_ctx:
                 mms_words = mms.align_with_context(
                     (cropped, sample_rate),

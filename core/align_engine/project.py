@@ -70,6 +70,11 @@ def align_project(
     total = len(project.sentences)
 
     _report(cfg, 0, total + 1, "加载对齐器...")
+    # 本轮**成功提交**的句。收尾的 apply_seam_snaps 必须按它限定范围：
+    # 传 None 会把失败句、跳过句、甚至用户手工拖过而未参与本轮的句子一并吸附，
+    # 那等于在用户不知情（且不进 Undo）的情况下改写时间轴。AGENTS.md §3：
+    # 「批处理仅修改本轮成功提交句」。与 full.py 的 committed_sids 保持一致。
+    committed_sids: set[int] = set()
     with align_ctx:
         for idx, sent in enumerate(project.sentences):
             raise_if_cancelled(cfg.cancel_cb)
@@ -104,15 +109,17 @@ def align_project(
             except Exception as e:  # noqa: BLE001
                 logger.exception("[Align] 句 %d 失败: %s", idx, e)
                 continue
-            if not commit_aligned_words(
+            if commit_aligned_words(
                     sent, words,
                     next_start=(nxt_sent.start_time if nxt_sent else None),
                 ):
+                committed_sids.add(sent.sid)
+            else:
                 logger.warning("[Align] 句 %d 对齐产出为空，保留旧字级与脏标记", idx)
 
     project.sort()
     # 整项目接缝收尾：前句尾→后句首（小间隙）、后句首→前句尾（小重叠）对称吸附。
-    apply_seam_snaps(project)
+    apply_seam_snaps(project, sentence_sids=committed_sids)
     _report(cfg, total + 1, total + 1, "完成")
     logger.info(
         "[Align] 完成：%d 句 / %d 句已补齐字级",
@@ -160,6 +167,9 @@ def align_dirty_only(
 
     total = len(dirty)
     _report(cfg, 0, total + 1, f"加载对齐器（{total} 待对齐脏句）")
+    # 同 align_project：收尾吸附只作用于本轮成功提交的句，避免顺带改写锁定句
+    # 与本轮未参与句的时间轴（见 AGENTS.md §3）。
+    committed_sids: set[int] = set()
     with align_ctx:
         for pos, idx in enumerate(dirty):
             raise_if_cancelled(cfg.cancel_cb)
@@ -196,15 +206,17 @@ def align_dirty_only(
             except Exception as e:  # noqa: BLE001
                 logger.exception("[Align] 脏句 %d 失败: %s", idx, e)
                 continue
-            if not commit_aligned_words(
+            if commit_aligned_words(
                     sent, words,
                     next_start=(nxt_sent.start_time if nxt_sent else None),
                 ):
+                committed_sids.add(sent.sid)
+            else:
                 logger.warning("[Align] 脏句 %d 对齐产出为空，保留旧字级与脏标记", idx)
 
     project.sort()
     # 整项目接缝收尾：前句尾→后句首（小间隙）、后句首→前句尾（小重叠）对称吸附。
-    apply_seam_snaps(project)
+    apply_seam_snaps(project, sentence_sids=committed_sids)
     _report(cfg, total + 1, total + 1, "完成")
     logger.info(
         "[Align] dirty 模式完成：%d 待对齐句 / 当前脏=%d / 锁定=%d",

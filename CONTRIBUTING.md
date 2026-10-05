@@ -17,7 +17,7 @@
 - 句/字时间统一使用秒；导出时才格式化。
 - 字幕正文必须经过对应格式转义，不能把用户文本直接拼进 ASS/HTML 标签。
 - 保持 `sid` 唯一；重对齐失败不能覆盖旧 words，也不能错误清除 dirty 标记。
-- mpv 原生调用只能经 `ui/mpv_backend.py` 与 `ui/mpv_worker.py`；不要在顶层或 GUI 线程直接 import/调用 native mpv。
+- mpv 原生调用只能经 `ui/player/mpv_backend.py` 与 `ui/player/mpv_worker.py`；不要在顶层或 GUI 线程直接 import/调用 native mpv。
 - 直接 import 的第三方运行包必须在 `requirements.txt` 中有明确声明；改变依赖时同步检查授权清单和部署文档。
 - 包化、拆分和公开符号变更要保留现有兼容导入，或在 API/CHANGELOG 中说明破坏性影响。
 

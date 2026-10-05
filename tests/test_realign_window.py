@@ -1,4 +1,4 @@
-"""tests/test_realign_window.py — 单句重对齐窗口语义合并套件（纯逻辑）
+"""tests/test_realign_window.py — 单句重对齐窗口语义（纯逻辑，19 条独立用例）
 
 合并三个同主题契约组（原 test_align_padding_idempotent / test_align_window_recovery /
 test_seam_snap 三文件）：
@@ -9,6 +9,10 @@ B. 窗口双侧扩展：裁剪窗 = [max(前句尾, 句首-扩展), min(后句�
    句界被手动拖短后真实发音仍在窗内，重对齐可恢复；邻句锚截窗不吞邻音频。
 C. 句间接缝吸附：单句路径帧网格量化导致的 ≤25ms 缝隙吸附到后句起点，
    与全文重对齐（整段单一帧网格，天然无缝）表现一致；真实停顿不受影响。
+
+2026-10-05：原先只有单个 ``test_realign_window_pack`` 被收集、23 个 ``_case_*`` 全靠它
+逐层转发，失败时只能看到一行 pack 名。已把 19 条叶子用例改名为 ``test_*`` 直接收集，
+删掉 4 个纯转发的聚合器——断言逐条未动，只是失败定位从 1 行变成 19 行。
 """
 
 from __future__ import annotations
@@ -34,7 +38,7 @@ def _w(text, s, e):
     return WordTimestamp(text=text, start_time=s, end_time=e)
 
 
-def _case_align_sentence_passes_stable_tail_limit_to_mms():
+def test_align_sentence_passes_stable_tail_limit_to_mms():
     """MMS 后端：tail_limit_sec = 下一句起点；窗尾放宽但被 tail_limit 截短。"""
     from core.align_engine import AlignConfig, align_sentence
 
@@ -76,7 +80,7 @@ def _case_align_sentence_passes_stable_tail_limit_to_mms():
     assert abs(win_end - (12.0 + MMS_TAIL_EXTEND_MAX)) < 0.05
 
 
-def _case_realign_converges_no_tail_ratchet():
+def test_realign_converges_no_tail_ratchet():
     """幂等钉样：模拟「贪婪追踪顶满上界」最坏情形，重复重对齐句尾收敛不递增。"""
     from core.align_engine import AlignConfig, align_sentence
 
@@ -117,7 +121,7 @@ def _case_realign_converges_no_tail_ratchet():
     assert ends[0] <= NEXT_START + 1e-6, "拖音不得越过下一句起点"
 
 
-def _case_true_long_tail_can_extend_beyond_old_boundary():
+def test_true_long_tail_can_extend_beyond_old_boundary():
     """拖音真值超出旧句界：一次重对齐即修正句尾出去，不被旧句界钳死。"""
     from core.align_engine import AlignConfig, align_sentence
 
@@ -142,7 +146,7 @@ def _case_true_long_tail_can_extend_beyond_old_boundary():
     assert abs(sent.end_time - 13.2) < 1e-6, "真实拖音应把句尾合法修正出旧句界"
 
 
-def _case_pad_symmetric_defaults_everywhere():
+def test_pad_symmetric_defaults_everywhere():
     """pad 前后对称：四处默认配置 pad_before == pad_after。"""
     from core.align_engine import AlignConfig
     from core.asr_engine import TranscribeConfig
@@ -187,7 +191,7 @@ def _qwen_window(sent, audio_dur=60.0, prev_end=None, next_start=None):
     return win_start, win_start + captured["len"]
 
 
-def _case_qwen_head_shrunk_recoverable():
+def test_qwen_head_shrunk_recoverable():
     """句首被拖短（真实起音 8.0，被拖到 9.5）：窗口头侧必须覆盖 8.0。"""
     sent = Sentence(text="你好世界", start_time=9.5, end_time=11.0, language="zh")
     win_start, win_end = _qwen_window(sent, prev_end=6.0, next_start=13.0)
@@ -195,7 +199,7 @@ def _case_qwen_head_shrunk_recoverable():
     assert win_start >= 6.0 - 0.12 - 1e-6, "窗口不得越过前句尾（稳定锚，pad 容差内）"
 
 
-def _case_qwen_tail_shrunk_recoverable():
+def test_qwen_tail_shrunk_recoverable():
     """句尾被拖短（真实收音 12.0，被拖到 10.5）：窗口尾侧必须覆盖 12.0。"""
     sent = Sentence(text="你好世界", start_time=9.0, end_time=10.5, language="zh")
     win_start, win_end = _qwen_window(sent, prev_end=7.0, next_start=13.0)
@@ -203,7 +207,7 @@ def _case_qwen_tail_shrunk_recoverable():
     assert win_end <= 13.0 + 0.12 + 1e-6, "窗口不得越过后句头（稳定锚，pad 容差内）"
 
 
-def _case_qwen_window_without_neighbors_uses_extend():
+def test_qwen_window_without_neighbors_uses_extend():
     """无邻句：两侧按 ALIGN_WIN_EXTEND 放宽（媒体边缘由 _crop_audio 自身钳制）。"""
     sent = Sentence(text="你好", start_time=20.0, end_time=21.0, language="zh")
     win_start, win_end = _qwen_window(sent)
@@ -231,7 +235,7 @@ def _mms_window(sent, audio_dur=60.0, prev_end=None, next_start=None):
     return ws, ws + len(cropped) / sr, kwargs["tail_limit_sec"]
 
 
-def _case_mms_head_shrunk_recoverable():
+def test_mms_head_shrunk_recoverable():
     """MMS 句首被拖短（真实起音 8.0，被拖到 9.5）：窗口头侧必须覆盖 8.0。"""
     sent = Sentence(text="你好", start_time=9.5, end_time=11.0, language="zh")
     win_start, win_end, tail = _mms_window(sent, prev_end=6.0, next_start=13.0)
@@ -240,7 +244,7 @@ def _case_mms_head_shrunk_recoverable():
     assert tail == 13.0
 
 
-def _case_mms_tail_shrunk_recoverable():
+def test_mms_tail_shrunk_recoverable():
     """MMS 句尾被拖到任何位置：窗尾 = min(句尾+前瞻, 下一句头)，覆盖真值。"""
     # 真实收音 12.0；句尾被拖短到 10.2
     sent = Sentence(text="拖音", start_time=9.0, end_time=10.2, language="zh")
@@ -249,7 +253,7 @@ def _case_mms_tail_shrunk_recoverable():
     assert win_end <= 13.5 + 1e-6, "不得越过后句头"
 
 
-def _case_window_stable_across_repeated_realign():
+def test_window_stable_across_repeated_realign():
     """锚不动 → 窗口恒定：同一句连续 3 次重对齐窗口完全一致（无棘轮）。"""
     sent = Sentence(text="你好", start_time=9.0, end_time=11.0, language="zh")
     wins = [
@@ -266,7 +270,7 @@ def _sent(text, s, e, words=None, **kw):
     return st
 
 
-def _case_snap_within_threshold():
+def test_snap_within_threshold():
     """帧量化缝隙（20ms）→ 吸附无缝。"""
     s = _sent("你好", 1.0, 1.98, words=[("你", 1.0, 1.5), ("好", 1.5, 1.98)])
     snap_tail_to_next_start(s, 2.0)          # 间隙 20ms
@@ -274,7 +278,7 @@ def _case_snap_within_threshold():
     assert s.end_time == 2.0
 
 
-def _case_no_snap_beyond_threshold():
+def test_no_snap_beyond_threshold():
     """真实停顿（100ms）→ 保持原样。"""
     s = _sent("你好", 1.0, 1.9, words=[("你", 1.0, 1.5), ("好", 1.5, 1.9)])
     snap_tail_to_next_start(s, 2.0)          # 间隙 100ms
@@ -282,7 +286,7 @@ def _case_no_snap_beyond_threshold():
     assert s.end_time == 1.9
 
 
-def _case_no_snap_when_flush_or_overlap():
+def test_no_snap_when_flush_or_overlap():
     """已无缝 / 已重叠 → 不动（不制造回退）。"""
     s = _sent("你好", 1.0, 2.0, words=[("你", 1.0, 1.5), ("好", 1.5, 2.0)])
     snap_tail_to_next_start(s, 2.0)          # 间隙 0
@@ -292,7 +296,7 @@ def _case_no_snap_when_flush_or_overlap():
     assert s2.words[-1].end_time == 2.05
 
 
-def _case_no_snap_without_next_or_words():
+def test_no_snap_without_next_or_words():
     """最后一句 / 无字级 → 不动。"""
     s = _sent("你好", 1.0, 1.98, words=[("你", 1.0, 1.5), ("好", 1.5, 1.98)])
     snap_tail_to_next_start(s, None)
@@ -302,7 +306,7 @@ def _case_no_snap_without_next_or_words():
     assert s2.end_time == 1.98
 
 
-def _case_snap_next_start_to_prev_end():
+def test_snap_next_start_to_prev_end():
     """D. 后句首不超前句尾（与前句尾吸附对称的收尾）。
 
     - 小重叠（≤25ms）→ 后句整体右移，首字 start = 前句尾，句内结构不变；
@@ -337,7 +341,7 @@ def _case_snap_next_start_to_prev_end():
     assert nxt5.start_time == 1.98
 
 
-def _case_apply_seam_snaps_symmetric():
+def test_apply_seam_snaps_symmetric():
     """D. apply_seam_snaps 现在同时做「前句尾→后句首」与「后句首→前句尾」对称收尾。"""
     from core.align_engine import apply_seam_snaps
 
@@ -352,7 +356,7 @@ def _case_apply_seam_snaps_symmetric():
     assert n == 1
 
 
-def _case_dirty_realign_seam_matches_fulltext():
+def test_dirty_realign_seam_matches_fulltext():
     """集成：脏句重对齐后连唱接缝无缝（与全文路径一致）。
 
     模拟单句网格量化：MMS 返回的尾字 end 停在 1.98（新网格帧边界），
@@ -387,7 +391,7 @@ def _case_dirty_realign_seam_matches_fulltext():
     assert front.end_time == 2.0
 
 
-def _case_fulltext_multilang_seam_snap():
+def test_fulltext_multilang_seam_snap():
     """全文重对齐（多语言分段）后段间接缝也必须吸附。
 
     旧 bug：full.py 已 import snap_tail 却从未调用；按语言分段时每段自有
@@ -449,7 +453,7 @@ def _case_fulltext_multilang_seam_snap():
     assert front.words[-1].end_time == 2.0
 
 
-def _case_long_sentence_split_is_bounded_and_non_recursive():
+def test_long_sentence_split_is_bounded_and_non_recursive():
     """>300s 无标点句也必须严格缩小；极端短文本明确报错而非递归爆栈。"""
     from core.align_engine import AlignConfig
     from core.align_engine.sentence import _align_long_sentence, _split_long_text_bounded
@@ -484,53 +488,3 @@ def _case_long_sentence_split_is_bounded_and_non_recursive():
         )
 
 
-# ── 聚合入口 ─────────────────────────────────────────────────────
-
-def _case_stable_anchor_and_idempotency():
-    """A. 稳定锚与幂等：tail_limit 传递 / 3 连次收敛 / 拖音合法越旧句界 / pad 对称。"""
-    _case_align_sentence_passes_stable_tail_limit_to_mms()
-    _case_realign_converges_no_tail_ratchet()
-    _case_true_long_tail_can_extend_beyond_old_boundary()
-    _case_pad_symmetric_defaults_everywhere()
-
-
-def _case_window_recovery_from_dragged_boundaries():
-    """B. 窗口双侧扩展：Qwen/MMS 首尾拖短可恢复 / 邻锚截窗 / 无邻句放宽 / 窗口恒定。"""
-    _case_qwen_head_shrunk_recoverable()
-    _case_qwen_tail_shrunk_recoverable()
-    _case_qwen_window_without_neighbors_uses_extend()
-    _case_mms_head_shrunk_recoverable()
-    _case_mms_tail_shrunk_recoverable()
-    _case_window_stable_across_repeated_realign()
-
-
-def _case_seam_snap_consistency():
-    """C. 接缝吸附：阈内吸附 / 真停顿不动 / 无缝与重叠不动 / 边界情形 / 脏句+全文集成。"""
-    _case_snap_within_threshold()
-    _case_no_snap_beyond_threshold()
-    _case_no_snap_when_flush_or_overlap()
-    _case_no_snap_without_next_or_words()
-    _case_dirty_realign_seam_matches_fulltext()
-    _case_fulltext_multilang_seam_snap()
-
-
-def _case_seam_snap_symmetric_next_start():
-    """D. 后句首不超前句尾：小重叠吸附 / 大重叠·已对齐·无字级·锁定不动 / apply_seam_snaps 对称。"""
-    _case_snap_next_start_to_prev_end()
-    _case_apply_seam_snaps_symmetric()
-
-
-def test_realign_window_pack():
-    """test_realign_window_pack：合并 5 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_long_sentence_split_is_bounded_and_non_recursive()
-    _case_stable_anchor_and_idempotency()
-    _case_window_recovery_from_dragged_boundaries()
-    _case_seam_snap_consistency()
-    _case_seam_snap_symmetric_next_start()
-
-if __name__ == "__main__":
-    import sys
-
-    import pytest
-
-    sys.exit(pytest.main([__file__, "-q"]))

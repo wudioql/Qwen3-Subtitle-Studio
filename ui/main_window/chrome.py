@@ -118,6 +118,16 @@ class ChromeMixin:
         self._act_align_dirty.setEnabled(False)
         m_tools.addAction(self._act_align_dirty)
 
+        # 人声提取（工具栏亦有按钮，见 _build_toolbar）
+        self._act_extract_vocals = QAction("提取人声…", self)
+        self._act_extract_vocals.setToolTip(
+            "对当前媒体提取纯人声（Kim_Vocal_2 剥离伴奏），字幕数据保留。\n"
+            "提取后可重新识别，音轨即换成去伴奏版本。"
+        )
+        self._act_extract_vocals.setEnabled(False)
+        self._act_extract_vocals.triggered.connect(self._on_act_extract_vocals)
+        m_tools.addAction(self._act_extract_vocals)
+
         # 设置
         m_sett = mb.addMenu("设置(&S)")
         self._act_theme = QAction("切换浅色/深色模式", self)
@@ -136,36 +146,78 @@ class ChromeMixin:
 
 
     def _build_toolbar(self) -> None:
+        """主工具栏 = **两行** QToolBar（2026-10-04）。
+
+        为什么拆两行：单行放不下——7 个操作按钮 + 3 组「标签 + 下拉」+
+        主题/设置，实测在常见窗口宽度下右边被挤出可视区。QToolBar 本身不会
+        自动换行，且**不换行会直接裁掉右侧控件**（不是出现省略号）。
+
+        分行原则（按用户指定）：
+        - 第 1 行：纯**动作**按钮，按工作流顺序，识别/对齐各自成组；
+        - 第 2 行：从「识别语言」开始的全部**设置类**下拉 + 主题/设置。
+          设置类天然是「调一次就一直生效」的参数，与动作按钮混排时最容易
+          被误当成下一步操作，放第二行也更符合使用节奏。
+
+        第 2 行放在 Qt.TopToolBarArea 的下一行——注意 ``addToolBar`` 是
+        **顺序追加**语义：连续调用两次会把两个工具栏**并排放进同一行**
+        （实测 y 均为 30，看起来就是一个长工具栏），**不会**自动堆叠。
+        必须显式 ``addToolBarBreak()`` 才开始新行（2026-10-04 真机复测发现：
+        控件归属测试全绿，但真机只有 1 行）。
+        """
         tb = QToolBar("主工具栏", self)
         tb.setObjectName("main_command_toolbar")
         tb.setMovable(False)
         self.addToolBar(tb)
         self._main_toolbar = tb
 
+        tb2 = QToolBar("主工具栏·设置", self)
+        tb2.setObjectName("main_command_toolbar_settings")
+        tb2.setMovable(False)
+        # 换行必须显式声明，否则第2 个工具栏会被并到第 1 行右侧。
+        self.addToolBarBreak()
+        self.addToolBar(tb2)
+        self._main_toolbar_settings = tb2
+
         self._toolbar_action_items: list[tuple[PushButton, QAction, FIF]] = []
 
-        def add_action_button(action: QAction, label: str, fluent_icon: FIF) -> PushButton:
-            button = PushButton(tb)
+        def add_action_button(action: QAction, label: str, fluent_icon: FIF,
+                             target: QToolBar | None = None) -> PushButton:
+            bar = target if target is not None else tb
+            button = PushButton(bar)
             button.setText(label)
             button.setToolTip(action.toolTip() or action.text())
             button.setEnabled(action.isEnabled())
             button.clicked.connect(lambda _checked=False, a=action: a.trigger())
             action.changed.connect(lambda b=button, a=action: b.setEnabled(a.isEnabled()))
-            tb.addWidget(button)
+            bar.addWidget(button)
             self._toolbar_action_items.append((button, action, fluent_icon))
             return button
 
+        # ── 第 1 行：动作按钮 ──
         add_action_button(self._act_open, "打开媒体", FIF.FOLDER)
         add_action_button(self._act_import_subtitle, "导入字幕", FIF.DOCUMENT)
+        tb.addSeparator()
+        # 人声提取：独立成组，夹在「导入字幕」右、「识别生成字幕」左。
+        # 独立是因为它既不是导入也不是识别，而是一条**可重复**的后处理：
+        # 媒体打开后随时可以提取人声、保留字幕、换音轨重识别。
+        add_action_button(self._act_extract_vocals, "人声提取", FIF.MUSIC)
         tb.addSeparator()
         add_action_button(self._act_transcribe, "识别生成字幕", FIF.ROBOT)
         tb.addSeparator()
         add_action_button(self._act_align_full, "全文重对齐", FIF.SYNC)
         add_action_button(self._act_align_sel, "选中句重对齐", FIF.STOP_WATCH)
         add_action_button(self._act_align_dirty, "修改句重对齐", FIF.UPDATE)
-        tb.addSeparator()
 
-        tb.addWidget(QLabel("识别语言", self))
+        # ── 第 2 行：设置类下拉（从「识别语言」开始）──
+        # 整行**靠右对齐**（用户指定）：弹性 spacer 放在最前面占掉左侧空白，
+        # 后面跟一串设置类控件整体贴右。原来 spacer 放在中间，只有末尾的
+        # 「主题/设置」靠右，前面的下拉仍然左对齐。
+        # 三个下拉的宽度由 _fit_combo 按字体度量算出（不截断文字），
+        # 它们独占一整行，因此不再有撑爆工具栏的风险。
+        spacer = QWidget(tb2)
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        tb2.addWidget(spacer)                      # 弹性占位：把后续控件整体推向右侧
+        tb2.addWidget(QLabel("识别语言", self))
         self._global_lang = ComboBox(self)
         for code, name in GLOBAL_LANGUAGES:
             self._global_lang.addItem(name, userData=code)
@@ -173,36 +225,99 @@ class ChromeMixin:
             "ASR 识别语言（仅作用于转写；重对齐按各句语言逐句执行，未设置的句回落项目语言）"
         )
         self._global_lang.currentIndexChanged.connect(self._on_global_lang_changed)
-        self._global_lang.setMinimumWidth(112)
-        self._global_lang.setMaximumWidth(150)
-        tb.addWidget(self._global_lang)
+        self._fit_combo(self._global_lang, 96, 130)
+        tb2.addWidget(self._global_lang)
 
-        tb.addSeparator()
-        tb.addWidget(QLabel("对齐模式", self))
+        tb2.addSeparator()
+        tb2.addWidget(QLabel("识别后端", self))
+        self._asr_backend = ComboBox(self)
+        self._asr_backend.addItem("🖥️ 本地 · Qwen3-ASR", userData="local")
+        self._asr_backend.addItem("☁️ 云端 · SiliconFlow", userData="cloud")
+        self._asr_backend.setToolTip(
+            "语音识别在哪里跑：\n"
+            "本地：本机显卡加载 Qwen3-ASR-1.7B（默认，需要显存）\n"
+            "云端：音频上传到 SiliconFlow，本地只跑 0.6B 对齐器（省显存，需要 API Key）\n"
+            "两种模式的字级时间戳都由本地对齐器产出，精度一致。"
+        )
+        self._asr_backend.currentIndexChanged.connect(self._on_asr_backend_changed)
+        self._fit_combo(self._asr_backend, 120, 150)
+        tb2.addWidget(self._asr_backend)
+
+        tb2.addSeparator()
+        tb2.addWidget(QLabel("对齐模式", self))
         self._align_backend = ComboBox(self)
         self._align_backend.addItem("🗣️ 口语 / 播客 (Qwen3)", userData="qwen")
         self._align_backend.addItem("🎵 歌曲 / 歌词 (MMS-FA)", userData="mms")
         self._align_backend.setToolTip("选择强制对齐引擎：Qwen3-Aligner 适合口语对话；MMS-FA 适合歌曲长拖音及多语言混杂歌词")
         self._align_backend.currentIndexChanged.connect(self._on_align_backend_changed)
-        self._align_backend.setMinimumWidth(168)
-        tb.addWidget(self._align_backend)
+        self._fit_combo(self._align_backend, 120, 160)
+        tb2.addWidget(self._align_backend)
 
-        spacer = QWidget(tb)
-        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        tb.addWidget(spacer)
+        tb2.addSeparator()
         self._btn_theme = PushButton(self)
         self._btn_theme.setText("主题")
         self._btn_theme.setToolTip("切换浅色/深色 (Ctrl+Shift+T)")
         self._btn_theme.clicked.connect(self._on_toggle_theme)
-        tb.addWidget(self._btn_theme)
+        tb2.addWidget(self._btn_theme)
         self._btn_settings = PushButton(self)
         self._btn_settings.setText("设置")
         self._btn_settings.setToolTip("打开偏好设置")
         self._btn_settings.clicked.connect(self._on_open_settings)
-        tb.addWidget(self._btn_settings)
+        tb2.addWidget(self._btn_settings)
 
         self._update_toolbar_icons(isDarkTheme())
 
+    # qfluentwidgets ``ComboBox`` 的**实测**布局常量（headless 下用 ``grab()``
+    # 逐列扫描暗像素标定，2026-10-04）：
+    #
+    #   * 文字墨迹**左对齐**，起点恒为 ``_COMBO_TEXT_LEFT``（12px），且**不随控件
+    #     宽度变化**——所以文字不会被「居中」到箭头底下。
+    #   * 文字可用区右边界恒为 ``width - _COMBO_TEXT_RIGHT``（34px），而箭头
+    #     画在 ``width-22``（见 combo_box.py::paintEvent），二者天然留 12px
+    #     间隙——**箭头本就不会压住文字**。
+    #   * 因此完整显示一项文字需要 ``advance + 12 + 34``。差这几像素不会
+    #     「被箭头遮挡」，而是 Qt **静默裁掉末字**——这才是用户看到的
+    #     「显示不全」：「自动检测」advance=56、需 102px，原来只给 96px。
+    _COMBO_TEXT_LEFT = 12
+    _COMBO_TEXT_RIGHT = 34
+    _COMBO_CHROME = _COMBO_TEXT_LEFT + _COMBO_TEXT_RIGHT   # 46
+
+    @classmethod
+    def _fit_combo(cls, combo: ComboBox, min_w: int, max_w: int) -> None:
+        """按**实测绘制几何**给下拉定宽，保证最长一项完整显示。
+
+        这里踩过两次坑，结论都写在下面，别再改回去：
+
+        1. **不能拍脑袋定死宽**（更早一版夹 120~150px）：实测「☁️ 云端 ·
+           SiliconFlow」``advance=252``，加 46px 装饰共需 298px，150px
+           必然裁掉末字。
+        2. **不要试图给箭头「让位」**：``ComboBox.paintEvent`` 只画箭头，文字
+           由 ``QPushButton.paintEvent`` 绘制且**左对齐**、起点恒为 12px，
+           文字区右边界恒为 ``width-34``，比箭头起点 ``width-22`` 还靠左
+           12px——**箭头压不到文字**。真实症状是「宽度不够 → 末字被静默
+           裁掉」，加padding 只会让文字更早被裁。
+
+        ⚠️ 曾尝试 ``setTextMargins`` 避让箭头，**无效**：
+        ``QWidget.setTextMargins`` 在 **PySide6 里未导出**（与
+        ``QWidget.moveCenter`` 同一类问题）；改用 QSS padding 实测墨迹仅从
+        ``12..63`` 移到 ``13..64``，因为原始 QSS 本身已有内边距。
+
+        宽度公式：``最长项 advance + 46``，定点（min==max）。第 2 行独占
+        整行，实测最宽处仍有余量。
+        """
+        fm = combo.fontMetrics()
+        need_text = 0
+        for i in range(combo.count()):
+            need_text = max(need_text, fm.horizontalAdvance(combo.itemText(i)))
+        want = need_text + cls._COMBO_CHROME
+        # 上限仅在「文字本身就超长」时放弃——此时截断文字比撑宽更糟。
+        width = want if want > max_w else max(min_w, want)
+        combo.setMinimumWidth(width)
+        combo.setMaximumWidth(width)
+        combo.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Fixed,
+        )
 
     def _update_toolbar_icons(self, dark: bool) -> None:
         t = Theme.DARK if dark else Theme.LIGHT
@@ -246,6 +361,12 @@ class ChromeMixin:
             if idx >= 0:
                 self._global_lang.setCurrentIndex(idx)
 
+            # 识别后端（本地 / 云端）持久化在 prefs.asr.asr_backend
+            asr_backend = (getattr(prefs.asr, "asr_backend", "local") or "local")
+            c_idx = self._asr_backend.findData(asr_backend)
+            if c_idx >= 0:
+                self._asr_backend.setCurrentIndex(c_idx)
+
             backend = (prefs.align.align_backend or "qwen")
             b_idx = self._align_backend.findData(backend)
             if b_idx >= 0:
@@ -253,6 +374,21 @@ class ChromeMixin:
         except Exception:
             logger.debug("[偏好] 加载工具栏偏好失败")
 
+
+    def _on_asr_backend_changed(self, _idx: int) -> None:
+        """识别后端切换（本地 / 云端）。持久化到 prefs.asr.asr_backend。
+
+        这里**不**做任何 Key 校验：工具栏只负责选择，缺 Key 会在真正开始识别前
+        由 workflow_controller 拦截并给出引导（那时用户才知道去哪里填）。
+        """
+        backend = self._asr_backend.currentData() or "local"
+        try:
+            from core.app_config import load_preferences, save_preferences
+            prefs = load_preferences()
+            prefs.asr.asr_backend = backend
+            save_preferences(prefs)
+        except Exception:
+            logger.debug("[偏好] 保存识别后端失败")
 
     def _on_align_backend_changed(self, _idx: int) -> None:
         backend = self._align_backend.currentData() or "qwen"
@@ -295,6 +431,17 @@ class ChromeMixin:
     def _on_open_settings(self) -> None:
         from ui.settings_dialog import SettingsDialog
         dlg = SettingsDialog(self)
+        # 与父窗口中心对齐（2026-10-04）。不居中时对话框跟随父窗口几何，
+        # 父窗口非最大化且偏上时对话框会跑出屏幕上边缘，标题栏够不到 → 整个窗口拖不动，
+        # 只能关掉、把主窗口最大化再重开。
+        #
+        # 注意：PySide6 的 QWidget/QDialog **没有** moveCenter()（那是 C++ QWidget 的方法，
+        # PySide6 未导出；上一版照C++ 写法直接调会抛 AttributeError，对话框根本弹不出来）。
+        # 正确做法是拿 frameGeometry() 调 QRect.moveCenter()，再把结果topLeft 交给 move()——
+        # move() 收的是frame 左上角，正好和 frameGeometry 配套（直接用 geometry() 会差一个标题栏高度）。
+        frame = dlg.frameGeometry()
+        frame.moveCenter(self.frameGeometry().center())
+        dlg.move(frame.topLeft())
         dlg.exec()
 
 
@@ -331,6 +478,11 @@ class ChromeMixin:
 
     def _on_act_transcribe(self) -> None:
         self.workflow.start_transcribe()
+
+
+    def _on_act_extract_vocals(self) -> None:
+        """工具栏/菜单「人声提取」的动作代理（真正的活在 ProjectController）。"""
+        self.project_ctrl.extract_vocals_now()
 
 
     def _on_act_align_dirty(self) -> None:

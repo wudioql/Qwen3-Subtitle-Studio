@@ -28,7 +28,7 @@ def app():
     return app
 
 
-def _case_ass_preview_real_font_scaling_and_theme_follow(app):
+def test_ass_preview_real_font_scaling_and_theme_follow(app):
     """测试 ASS 预览画布随主题自适应背景色，且字号随用户输入连续、真实按比放大。"""
     widget = SubtitlePreviewWidget()
     widget.resize(680, 140)
@@ -87,7 +87,7 @@ def _case_ass_preview_real_font_scaling_and_theme_follow(app):
     print("test_ass_preview_real_font_scaling_and_theme_follow PASSED ✔")
 
 
-def _case_sentence_table_language_delegate_opaque_and_single_click(app):
+def test_sentence_table_language_delegate_opaque_and_single_click(app):
     """测试句级表格语言列委托背景完全不透明、单击即开下拉且全表共享统一代理状态。"""
     apply_theme(app, False)
     view = SentenceLevelView()
@@ -132,11 +132,6 @@ def _case_sentence_table_language_delegate_opaque_and_single_click(app):
 
     print("test_sentence_table_language_delegate_opaque_and_single_click PASSED ✔")
 
-
-def test_ass_preview_table_pack(app):
-    """test_ass_preview_table_pack：合并 2 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_ass_preview_real_font_scaling_and_theme_follow(app=app)
-    _case_sentence_table_language_delegate_opaque_and_single_click(app=app)
 
 if __name__ == "__main__":
     import sys

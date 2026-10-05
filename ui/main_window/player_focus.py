@@ -37,6 +37,11 @@ class PlayerFocusMixin:
             self._main_toolbar,
             self.statusBar(),
         )
+        # 第二行设置栏（2026-04 起工具栏拆两行）也必须一起隐藏，
+        # 否则播放器专注模式下只剩一条设置栏悬在顶部。
+        settings_bar = getattr(self, "_main_toolbar_settings", None)
+        if settings_bar is not None:
+            widgets = widgets + (settings_bar,)
         self._player_focus_snapshot = {
             "main_sizes": self._main_h_split.sizes(),
             "left_sizes": self._left_v_split.sizes(),

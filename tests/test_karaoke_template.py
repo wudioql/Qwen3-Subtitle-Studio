@@ -21,7 +21,8 @@ from subs.karaoke_template import (
 
 # ═════════════ logic ═════════════
 
-def _case_default_matches_legacy():
+@pytest.mark.logic
+def test_default_matches_legacy():
     """内置库 6 条效果、仅「弹跳放大」默认启用；渲染输出与历史硬编码行逐字节等价。"""
     from subs.karaoke_template import builtin_effects
     lib = builtin_effects()
@@ -38,7 +39,8 @@ def _case_default_matches_legacy():
     )
 
 
-def _case_form_sections_toggle():
+@pytest.mark.logic
+def test_form_sections_toggle():
     """参数化各段独立开关：颜色/发光/缩放/fad/pos 按开关出现或消失。"""
     t = KaraokeTemplate(scale_enabled=False, fad_in_ms=0, fad_out_ms=0,
                         use_pos=False, color_enabled=True,
@@ -66,7 +68,8 @@ def _case_form_sections_toggle():
     assert t4.effect_field() == "template line all"
 
 
-def _case_raw_mode_and_effect_field():
+@pytest.mark.logic
+def test_raw_mode_and_effect_field():
     """raw 模式补 Comment 前缀；修饰符顺序稳定；空 raw 输出空行被过滤。"""
     t = KaraokeTemplate(mode="raw", raw_text="0,0:00:00.00,0:00:05.00,D,,0,0,0,template syl,{\\k}")
     assert t.render_comment().startswith("Comment: 0,")
@@ -79,7 +82,8 @@ def _case_raw_mode_and_effect_field():
     assert prefs.render_comments() == []
 
 
-def _case_serialization_roundtrip_and_single_selection():
+@pytest.mark.logic
+def test_serialization_roundtrip_and_single_selection():
     """to_dict/from_dict 往返；旧多选只保留首项；全禁用保持无模板。"""
     p = KaraokeTemplatePrefs(templates=[
         KaraokeTemplate(name="辉光", layer=0, glow_enabled=True, scale_enabled=False),
@@ -98,7 +102,8 @@ def _case_serialization_roundtrip_and_single_selection():
     assert off.render_comments() == []
 
 
-def _case_export_pipeline_wiring():
+@pytest.mark.logic
+def test_export_pipeline_wiring():
     """to_ass_karaoke 透传 template_prefs；偏好容器默认往返。"""
     from core.app_config import Preferences
     from subs import to_ass_karaoke
@@ -129,19 +134,10 @@ def _case_export_pipeline_wiring():
     assert prefs.karaoke_template.to_prefs().templates[0].name == "变色"
 
 
-@pytest.mark.logic
-def _case_karaoke_template_logic_pack():
-    """模板模型 5 合 1：默认等价 / 分段开关 / raw / 单选迁移 / 导出接线。"""
-    _case_default_matches_legacy()
-    _case_form_sections_toggle()
-    _case_raw_mode_and_effect_field()
-    _case_serialization_roundtrip_and_single_selection()
-    _case_export_pipeline_wiring()
-
-
 # ═════════════ ui ═════════════
 
-def _case_dialog_roundtrip_and_modes():
+@pytest.mark.ui
+def test_dialog_roundtrip_and_modes():
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication(["test"])
     from ui.karaoke_template_dialog import KaraokeTemplateDialog
@@ -212,7 +208,8 @@ def _case_dialog_roundtrip_and_modes():
         dlg.close()
 
 
-def _case_export_panel_card_persistence():
+@pytest.mark.ui
+def test_export_panel_card_persistence():
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication(["test"])
     from core.app_config import load_preferences
@@ -238,18 +235,6 @@ def _case_export_panel_card_persistence():
     finally:
         card.deleteLater()
 
-
-@pytest.mark.ui
-def _case_karaoke_template_dialog_pack():
-    """弹窗与卡片 2 合 1：回显-编辑-保存与模式切换 / 面板卡片持久化。"""
-    _case_dialog_roundtrip_and_modes()
-    _case_export_panel_card_persistence()
-
-
-def test_karaoke_template_pack():
-    """test_karaoke_template_pack：合并 2 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_karaoke_template_logic_pack()
-    _case_karaoke_template_dialog_pack()
 
 if __name__ == "__main__":
     import sys

@@ -1,5 +1,9 @@
 """subs.karaoke_template — Aegisub Karaoke Templater 模板的数据模型与渲染（纯逻辑）
 
+⚠️ 勿与 ``subs/karaoke_templater.py`` 混淆（两者只差一个 r）：**本模块**是模板的
+**数据模型与 Comment 行渲染**；``karaoke_templater`` 是模板**应用器**（把模板套到
+源行上、产出 Apply 后的 fx 结构）。
+
 背景：k-tag ASS 导出自带的 Automation 模板行此前是 ass_karaoke.py 里的硬编码
 常量，用户无法定制效果——与 AssStylePrefs 出现前的 [V4+ Styles] 同病。
 

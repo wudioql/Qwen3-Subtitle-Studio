@@ -59,7 +59,7 @@ def _make_test_project() -> SubtitleProject:
 # 1. 脏/锁标记语义
 # ══════════════════════════════════════════════════════════════
 
-def _case_models_dirty_and_locked():
+def test_models_dirty_and_locked():
     p = _make_test_project()
     assert p.dirty_indices() == [0]
     assert p.alignable_dirty_indices() == [0]
@@ -84,7 +84,7 @@ def _case_models_dirty_and_locked():
     assert p2.sentences[0].is_locked is False
 
 
-def _case_project_json_roundtrip_paths_and_words(tmp_path):
+def test_project_json_roundtrip_paths_and_words(tmp_path):
     """工程 .json：媒体路径 + 字级 + 脏标记 roundtrip（对应保存/打开工程）。"""
     src = SubtitleProject(
         source_media_path=str(tmp_path / "clip.mp4"),
@@ -121,7 +121,7 @@ def _case_project_json_roundtrip_paths_and_words(tmp_path):
     assert src.to_dict()["schema_version"] == 1
 
 
-def _case_project_schema_validation_and_atomic_save(tmp_path):
+def test_project_schema_validation_and_atomic_save(tmp_path):
     import copy
     from unittest.mock import patch
 
@@ -157,7 +157,7 @@ def _case_project_schema_validation_and_atomic_save(tmp_path):
     assert not list(tmp_path.glob(".atomic.qss.json.*.tmp"))
 
 
-def _case_project_string_bool_migration_and_limits():
+def test_project_string_bool_migration_and_limits():
     """字符串布尔规整（修复 bool("false")==True）、大小上限、句内字时间单调。"""
     import copy
 
@@ -212,7 +212,7 @@ def _case_project_string_bool_migration_and_limits():
 # 2. 媒体路径相对化 / 解析（跨机复现）
 # ══════════════════════════════════════════════════════════════
 
-def _case_media_paths_relativize_pack():
+def test_media_paths_relativize():
     import os as _os
     from unittest.mock import patch
 
@@ -247,7 +247,7 @@ def _case_media_paths_relativize_pack():
         assert out4["audio_path"] == ".temp/song.wav"
 
 
-def _case_media_paths_resolve_pack(tmp_path):
+def test_media_paths_resolve(tmp_path):
     from subs.models import _resolve_media_paths
 
     # 相对 → 工程目录绝对
@@ -284,7 +284,7 @@ def _case_media_paths_resolve_pack(tmp_path):
     assert out4["source_media_path"] == str(tmp_path / "song2.mp4")
 
 
-def _case_save_load_roundtrip_relativizes_and_resolves(tmp_path):
+def test_save_load_roundtrip_relativizes_and_resolves(tmp_path):
     import shutil
 
     src = tmp_path / "src_proj"
@@ -309,7 +309,7 @@ def _case_save_load_roundtrip_relativizes_and_resolves(tmp_path):
 # 3. 跨机复现三件套随工程往返
 # ══════════════════════════════════════════════════════════════
 
-def _case_triple_settings_roundtrip(tmp_path):
+def test_triple_settings_roundtrip(tmp_path):
     import json
 
     proj = SubtitleProject(
@@ -332,7 +332,7 @@ def _case_triple_settings_roundtrip(tmp_path):
     assert loaded.export_settings["word_style"]["bold"] is True
 
 
-def _case_triple_settings_absent_on_old_project(tmp_path):
+def test_triple_settings_absent_on_old_project(tmp_path):
     import json
 
     proj = SubtitleProject(sentences=[Sentence(text="测试", start_time=0.0, end_time=1.0)])
@@ -351,7 +351,7 @@ def _case_triple_settings_absent_on_old_project(tmp_path):
 # 4. subs.atomic_io 原子写盘
 # ══════════════════════════════════════════════════════════════
 
-def _case_atomic_write_text_success(tmp_path):
+def test_atomic_write_text_success(tmp_path):
     import subs.atomic_io as aio
 
     dest = tmp_path / "sub" / "out.vtt"
@@ -359,7 +359,7 @@ def _case_atomic_write_text_success(tmp_path):
     assert dest.read_text(encoding="utf-8") == "WEBVTT\n"
 
 
-def _case_atomic_write_text_does_not_corrupt_on_failure(tmp_path, monkeypatch):
+def test_atomic_write_text_does_not_corrupt_on_failure(tmp_path, monkeypatch):
     import subs.atomic_io as aio
 
     dest = tmp_path / "out.srt"
@@ -370,32 +370,6 @@ def _case_atomic_write_text_does_not_corrupt_on_failure(tmp_path, monkeypatch):
     assert dest.read_text(encoding="utf-8") == "original"
     assert not list(tmp_path.glob(".out.srt.*.tmp"))
 
-
-def test_project_models_contract_pack(tmp_path):
-    """test_project_models_contract_pack：合并 4 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_models_dirty_and_locked()
-    _case_project_json_roundtrip_paths_and_words(tmp_path=tmp_path)
-    _case_project_schema_validation_and_atomic_save(tmp_path=tmp_path)
-    _case_project_string_bool_migration_and_limits()
-
-
-def test_project_media_paths_pack(tmp_path):
-    """test_project_media_paths_pack：合并 3 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_media_paths_relativize_pack()
-    _case_media_paths_resolve_pack(tmp_path=tmp_path)
-    _case_save_load_roundtrip_relativizes_and_resolves(tmp_path=tmp_path)
-
-
-def test_project_triple_settings_pack(tmp_path):
-    """test_project_triple_settings_pack：合并 2 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_triple_settings_roundtrip(tmp_path=tmp_path)
-    _case_triple_settings_absent_on_old_project(tmp_path=tmp_path)
-
-
-def test_project_atomic_io_pack(tmp_path, monkeypatch):
-    """test_project_atomic_io_pack：合并 2 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_atomic_write_text_success(tmp_path=tmp_path)
-    _case_atomic_write_text_does_not_corrupt_on_failure(tmp_path=tmp_path, monkeypatch=monkeypatch)
 
 if __name__ == "__main__":
     import sys

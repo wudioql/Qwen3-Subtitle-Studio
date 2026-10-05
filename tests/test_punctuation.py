@@ -7,7 +7,9 @@
 - 标点切句（中/英/日切点；中文顿号保护；英文无标点硬切回退；SegmentationPrefs 持久化）；
 - 句尾标点零时间延伸（句末标点 end=前字 end，不制造句间重叠；句中标点仍填间隙）；
 - strip_trailing_punct（删句尾连续标点段、保留句中标点、不标脏、无标点 no-op）；
-- StripTrailingPunctCommand（redo/undo 按 sid 定位、锁定句跳过）。
+- StripTrailingPunctCommand（redo/undo 按 sid 定位、锁定句跳过）；
+- 切句器保护：域名 / 缩写 / 数值点不误判为句号、超长英文硬切对齐词边界、
+  CJK 逐字基线不变（被测函数属 ``core.asr_engine``，本地与云端后端共用同一路径）。
 """
 
 from __future__ import annotations
@@ -35,6 +37,8 @@ from core.asr_engine import (
     _split_text_by_punct,
     _text_only_to_sentences,
     _attach_words_to_sentences,
+    _hard_split,
+    _is_domain_dot,
 )
 from core.app_config import SegmentationPrefs
 
@@ -57,12 +61,12 @@ def _zh_words(chars, start=0.0, step=0.2):
 # 1. is_punct 字段与标点回填 / 导出
 # ═════════════════════════════════════════════════════════════
 
-def _case_punct_marking_filtering_transparency():
-    # 1. is_punct 原子字段
-    w = WordTimestamp(text="你", start_time=0.0, end_time=0.1)
-    assert w.is_punct is False
-    w.is_punct = True
-    assert w.is_punct is True
+def test_punct_marking_filtering_transparency():
+    # 1. is_punct 原子字段：默认 False，构造时显式传入生效
+    #    （持久化往返见 test_segmentation_prefs_and_persistence）
+    assert WordTimestamp(text="你", start_time=0.0, end_time=0.1).is_punct is False
+    assert WordTimestamp(text=",", start_time=0.1, end_time=0.1,
+                         is_punct=True).is_punct is True
 
     # 2. merge_punct_into_words 回填并打标
     text = "你好,世界。"
@@ -87,7 +91,7 @@ def _case_punct_marking_filtering_transparency():
     assert all("highlight" not in c.current_word_text for c in cues)
 
 
-def _case_punct_export_karaoke_and_lrc():
+def test_punct_export_karaoke_and_lrc():
     from subs.ass_karaoke import build_karaoke_line_text
     text = "你好,世界。"
     merged = merge_punct_into_words(text, _make_zh_words("你好世界"))
@@ -108,7 +112,7 @@ def _case_punct_export_karaoke_and_lrc():
         assert ch in lrc
 
 
-def _case_segmentation_prefs_and_persistence():
+def test_segmentation_prefs_and_persistence():
     # SegmentationPrefs 语言优先限度
     prefs = SegmentationPrefs(enabled=True, per_lang={
         "zh": {"max_chars": 16, "max_duration_sec": 8.0},
@@ -146,7 +150,7 @@ def _case_segmentation_prefs_and_persistence():
 ASR_TEXT = "青紫色的风掠过指尖,金线牡丹在呼吸间流转,墨香未干,茶烟已绕过雕花窗,今夜的月色可愿与我共采一段流光。"
 
 
-def _case_split_text_by_punct_languages():
+def test_split_text_by_punct_languages():
     # 中文：4 个 `,` + 1 个 `。` = 5 段
     parts = _split_text_by_punct(ASR_TEXT, min_chars_per_split=4)
     assert len(parts) == 5, f"预期 5 段，得 {len(parts)}"
@@ -167,7 +171,7 @@ def _case_split_text_by_punct_languages():
     assert parts_zh == ["我喜欢经济、新闻、体育这些话题，", "娱乐也很有趣。"]
 
 
-def _case_merge_and_attach_end_to_end():
+def test_merge_and_attach_end_to_end():
     # 单句回填：拼接文本恒等 + 时间单调
     sent1_text = "青紫色的风掠过指尖,"
     n = len(sent1_text) - 1  # 8 字
@@ -211,7 +215,7 @@ def _case_merge_and_attach_end_to_end():
             prev = w.start_time
 
 
-def _case_no_punct_english_fallback():
+def test_no_punct_english_fallback():
     cfg = TranscribeConfig()
     en_text = "Hello world this is a test of the segmentation without any punctuation marks"
     sentences_en = _text_only_to_sentences(en_text, total_sec=10.0, cfg=cfg, project_language="English")
@@ -219,7 +223,7 @@ def _case_no_punct_english_fallback():
     assert len(sentences_en) >= expected_min, f"硬切结果太少：{len(sentences_en)}"
 
 
-def _case_punct_timestamps_monotonic_and_no_overlap():
+def test_punct_timestamps_monotonic_and_no_overlap():
     text = "墨香未干，茶烟已绕过雕花窗。"
     raw_words = [
         WordTimestamp(text="墨", start_time=1.000, end_time=1.200),
@@ -252,7 +256,7 @@ def _case_punct_timestamps_monotonic_and_no_overlap():
         assert merged[i].start_time >= merged[i - 1].start_time
 
 
-def _case_decoration_symbols_no_karaoke_effect():
+def test_decoration_symbols_no_karaoke_effect():
     """特殊装饰字符（♪ ♫ ♬ ♩ #）不应拥有卡拉OK效果（与标点行为一致）。"""
     from subs.converter import _filter_animation_words
     # 装饰字符应被过滤（不参与逐字动效）
@@ -282,31 +286,11 @@ def _case_decoration_symbols_no_karaoke_effect():
     assert [w.text for w in filtered] == ["你", "好"]
 
 
-def _case_punct_marking_pack():
-    """标点标记与导出 2 合 1：标记/过滤/透明性 / karaoke 与 LRC 导出。"""
-    _case_punct_marking_filtering_transparency()
-    _case_punct_export_karaoke_and_lrc()
-    _case_decoration_symbols_no_karaoke_effect()
-
-
-def _case_segmentation_pack():
-    """分句 2 合 1：SegmentationPrefs 持久化 / 多语言标点切分。"""
-    _case_segmentation_prefs_and_persistence()
-    _case_split_text_by_punct_languages()
-
-
-def _case_punct_attach_pack():
-    """回填端到端 3 合 1：merge+attach / 英文无标点回退 / 时间戳单调无重叠。"""
-    _case_merge_and_attach_end_to_end()
-    _case_no_punct_english_fallback()
-    _case_punct_timestamps_monotonic_and_no_overlap()
-
-
 # ═════════════════════════════════════════════════════════════
 # 3. 句尾标点零时间延伸
 # ═════════════════════════════════════════════════════════════
 
-def _case_trailing_punct_zero_duration():
+def test_trailing_punct_zero_duration():
     from core.text_utils import sanitize_word_timestamps
 
     words = _zh_words("你好世界")   # 0.0~0.8
@@ -324,7 +308,7 @@ def _case_trailing_punct_zero_duration():
     assert sent.end_time == 0.8
 
 
-def _case_inner_punct_still_fills_gap():
+def test_inner_punct_still_fills_gap():
     # 句中标点（逗号）仍在字间填间隙、不豁免最小时长
     words = _zh_words("你好世界")
     merged = merge_punct_into_words("你好，世界", words)
@@ -338,7 +322,7 @@ def _case_inner_punct_still_fills_gap():
 # 4. strip_trailing_punct 纯函数
 # ═════════════════════════════════════════════════════════════
 
-def _case_strip_trailing_punct_pack():
+def test_strip_trailing_punct():
     from core.text_utils import strip_trailing_punct
 
     # 删句尾标点（字符 + 时间），句界回落尾字
@@ -371,7 +355,7 @@ def _case_strip_trailing_punct_pack():
     assert sent4.text == "你好世界"
 
 
-def _case_strip_trailing_punct_preserves_dirty_state():
+def test_strip_trailing_punct_preserves_dirty_state():
     """删除句尾标点不改脏：原脏保持脏、原净保持净（无需因删标点触发重对齐）。"""
     from core.text_utils import strip_trailing_punct
 
@@ -415,19 +399,189 @@ def test_strip_trailing_punct_command_undo_and_lock():
     assert [s.text for s in p.sentences] == orig_texts
 
 
-def test_punct_flow_pack():
-    """test_punct_flow_pack：合并 3 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_punct_marking_pack()
-    _case_segmentation_pack()
-    _case_punct_attach_pack()
+# ═════════════════════════════════════════════════════════════
+# 6. 切句器：域名 / 缩写 / 数值点保护 + 词边界硬切
+#
+# 2026-10-05 从 tests/test_cloud_asr.py 迁来。这些用例当初是**云端真机实测**
+# 暴露的问题，但被测函数（_split_text_by_punct / _is_domain_dot / _hard_split /
+# _text_only_to_sentences）全在 core.asr_engine，本地后端走的是同一条路径——
+# 按「被测函数所属模块」归属，放这里而不是云端文件。
+# ═════════════════════════════════════════════════════════════
+
+# 背景：英文句号「.」被刻意从强句末降级为弱标点（避免切碎 e.g. / U.S.），
+# 代价是 URL 会被腰斩。实测 en.wikipedia.org → "en." + "wikipedia.org."，
+# 同一段文本被切成 12 段。下面这组用例把修复后的行为钉住。
+_MIXED_URL_TEXT = (
+    "青紫色的风掠过指尖，金线牡丹在呼吸间流转。墨香未干，茶烟已绕过雕花窗。"
+    "今夜的月色，可愿与我共裁一段流光？Politics and the English language from "
+    "Wikipedia, the free encyclopedia at en.wikipedia.org. Politics and the "
+    "English language, 1946, is one."
+)
 
 
-def test_trailing_punct_pack():
-    """test_trailing_punct_pack：合并 4 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_trailing_punct_zero_duration()
-    _case_inner_punct_still_fills_gap()
-    _case_strip_trailing_punct_pack()
-    _case_strip_trailing_punct_preserves_dirty_state()
+def test_split_keeps_url_domain_intact():
+    """域名内部的点不能当句号——en.wikipedia.org 必须是完整的一段。"""
+    parts = _split_text_by_punct(_MIXED_URL_TEXT)
+    assert any("en.wikipedia.org." in p for p in parts), parts
+    # 绝不能出现被腰斩的碎片
+    assert not any(p.strip().rstrip(".") in ("en", "wikipedia", "org") for p in parts), parts
+
+
+def test_split_url_text_recovers_more_than_a_dozen_segments():
+    """修复前同一段文本被切成 12 段（含 URL 碎片 + 孤立逗号），修复后收敛到 11 段。
+
+    注意别误判成「3 段」：中文侧的逗号本来就是合法切分点
+    （青紫色…，/ 金线…。/ 墨香未干，…共 6 段），英文侧占 5 段。
+    这里要防的是**英文侧的 5 段里有3 段是URL 碎片**（en. / wikipedia.org. / 粘连句），
+    修复后它们应当合并。
+    """
+    parts = _split_text_by_punct(_MIXED_URL_TEXT)
+    assert len(parts) == 11
+    # 英文侧 5 段：3 句 + 2 句被逗号切开的续句
+    en_parts = [p for p in parts if p.strip() and "一" not in p and "风掠过" not in p]
+    assert not any(p.strip().rstrip(".") in ("en", "wikipedia", "org") for p in en_parts)
+    # 「Wikipedia,」与「1946,」是合法切分（弱标点后跟足量字符）
+    assert any("from Wikipedia," in p for p in parts)
+
+
+def test_split_preserves_chinese_behaviour():
+    """中文切句必须逐字不变——这是本改动唯一的「不能碰」基线。"""
+    zh = "青瓷色的风掠过指尖，惊现牡丹在呼吸间流转。墨香味甘茶烟已绕过雕花窗。今夜的月色，可愿与我共裁一段流光？"
+    assert _split_text_by_punct(zh) == [
+        "青瓷色的风掠过指尖，", "惊现牡丹在呼吸间流转。",
+        "墨香味甘茶烟已绕过雕花窗。", "今夜的月色，", "可愿与我共裁一段流光？",
+    ]
+
+
+def test_split_preserves_plain_english_behaviour():
+    """标准英文的切分必须与改动前一致（用户原本就认为英文断句没问题）。"""
+    en = ("The quick brown fox jumps over the lazy dog. Politics and the English "
+          "language come from Wikipedia. It is a free encyclopedia.")
+    assert _split_text_by_punct(en) == [
+        "The quick brown fox jumps over the lazy dog.",
+        " Politics and the English language come from Wikipedia.",
+        " It is a free encyclopedia.",
+    ]
+
+
+def test_split_keeps_abbreviations_and_decimals():
+    """缩写与小数点内部的点同样不是句号。"""
+    assert len(_split_text_by_punct(
+        "This is important, e.g. the first item. Then we continue with more text here."
+    )) == 2
+    assert len(_split_text_by_punct(
+        "The U.S. government announced it today. People around the world reacted quickly."
+    )) == 2
+    assert len(_split_text_by_punct(
+        "The value is 3.14159 exactly. This sentence continues with more words after it."
+    )) == 2
+
+
+def test_split_repairs_missing_space_after_period():
+    """``sentence.Another`` 是漏了空格的句号（模型漏标），必须能切开。"""
+    parts = _split_text_by_punct(
+        "This is the end of a sentence.Another sentence begins right here with new words."
+    )
+    assert len(parts) == 2
+    assert parts[0].endswith("sentence.")
+
+
+def test_word_ending_in_e_is_not_mistaken_for_abbreviation():
+    """反回归：以 e/i 结尾的**普通英文单词**的句号必须能切句。
+
+    起因（GUI 真机实测 SenseVoice 输出）::
+
+        今天我们来聊聊英文识别的问题。
+        Politics and the English language is a West Germanic language.它到底该怎么切分才正确。
+
+    修复前``language.`` 被判成「缩写点」→ 句界消失 → 英文与后面的中文粘成一块
+    （``counts["han"] > 0``）→ 整块退回Chinese → 再被 24 字中文字幕上限
+    从单词中间劈开（``Po|litics``）。这就是用户报的「英文被当成中文、
+    单词字母硬切」。
+
+    真正的 ``e.g.`` / ``i.e.`` 仍必须不可切——判据是那个 e/i **前面也是点**。
+    """
+    # 普通英文单词的句号：可切
+    for frag in ("language.它到底", "Germanic language.它", "the. 它", "be.接下来"):
+        pos = frag.index(".")
+        assert _is_domain_dot(frag, pos) is False, frag
+    # 真缩写：不可切
+    for frag in ("e.g. The", "i.e. The"):
+        pos = frag.rindex(".")
+        assert _is_domain_dot(frag, pos) is True, frag
+
+
+def test_chinese_numeric_dot_is_not_a_sentence_boundary():
+    """**用户明确要求**：中文里的点不能被当英文切坏——数值内部必须完整。"""
+    text = "这套设备售价 3.5 万元，误差 0.8%，转角 45 度即可。"
+    # 逐点检查：3.5 / 0.8 内部的点都不是句号
+    for i, ch in enumerate(text):
+        if ch == ".":
+            assert _is_domain_dot(text, i), f"位置 {i} 的数值点未被保护：{text!r}"
+    sents = _text_only_to_sentences(
+        text, total_sec=10.0, cfg=TranscribeConfig(), project_language="Chinese",
+    )
+    joined = "".join(s.text for s in sents)
+    assert "3.5" in joined and "0.8" in joined, [s.text for s in sents]
+
+
+def test_hard_split_breaks_latin_at_word_boundary_not_mid_word():
+    """反回归：超长英文的兜底硬切必须**对齐词边界**，不得从单词中间劈开。
+
+    修复前用 ``seg[i:i+cut_c]`` 盲切，实测把连字符词 ``Anglo-Saxon`` 拆成
+    ``...in the`` / `` Anglo-Saxon...``——字幕上是断词，对齐器则拿到一个
+    不存在的「词」。
+    """
+    text = ("Politics and the English language is a West Germanic language that originated in "
+            "the Anglo-Saxon peoples who lived in what is now England and parts of Scotland")
+    pieces = _hard_split(text, 84)
+    assert len(pieces) > 1, "超长英文应被切开"
+    # 无损校验：只有充当切点的那个空白被丢弃，所有非空白字符必须原样保留
+    assert re.sub(r"\s+", "", "".join(pieces)) == re.sub(r"\s+", "", text), "切分丢字符"
+    for p in pieces:
+        assert p == p.strip(), f"切分产生多余空白：{p!r}"
+        assert p, "不得产出空片段"
+    assert any("Anglo-Saxon" in p for p in pieces), \
+        [p for p in pieces if "Anglo" in p]
+    # 不得把连字符词劈开（``Anglo-`` / ``Saxon`` 分居两段）
+    assert not any(p.startswith("Saxon") or p.startswith("Anglo-") for p in pieces), pieces
+
+
+def test_hard_split_keeps_cjk_unchanged():
+    """中文仍按字数硬切——行为必须与改动前逐字一致（有回归风险的那一侧）。"""
+    text = "青紫色的风掠过指尖金线牡丹在呼吸间流转墨香未干茶烟已绕过雕花窗"
+    assert _hard_split(text, 10) == [text[i:i + 10] for i in range(0, len(text), 10)]
+
+
+def test_cjk_comma_still_splits_as_before():
+    """**回归守卫**：中文逗号仍是真句界，切分逐字不变（英文侧改动不得反噬中文）。"""
+    zh = "青紫色的风掠过指尖，金线牡丹在呼吸间流转。墨香未干，茶烟已绕过雕花窗。"
+    sents = _text_only_to_sentences(
+        zh, total_sec=13.76, cfg=TranscribeConfig(), project_language="Chinese",
+    )
+    assert [s.text for s in sents] == [
+        "青紫色的风掠过指尖，", "金线牡丹在呼吸间流转。", "墨香未干，", "茶烟已绕过雕花窗。",
+    ], [s.text for s in sents]
+
+
+def test_cjk_max_chars_behaviour_unchanged():
+    """**回归守卫**：中日韩语种的切分必须与改动前逐字一致。
+
+    新的语言默认阈值只作用于非中日韩语种（见 _CJK_LANGS）。中文素材在
+    ``max_sentence_chars=24`` 下的切分结果必须仍是原样，否则本轮就动了
+    既有中文行为——那是用户明确不允许的。
+    """
+    text = "青紫色的风掠过指尖，金线牡丹在呼吸间流转。墨香未干，茶烟已绕过雕花窗。"
+    for lang in ("Chinese", "Cantonese", "Japanese", "Korean"):
+        sents = _text_only_to_sentences(
+            text, total_sec=13.76, cfg=TranscribeConfig(), project_language=lang,
+        )
+        assert [s.text for s in sents] == [
+            "青紫色的风掠过指尖，", "金线牡丹在呼吸间流转。", "墨香未干，", "茶烟已绕过雕花窗。",
+        ], f"{lang} 切分被改动：{[s.text for s in sents]}"
+        # 语种原样沿用
+        assert all(s.language == lang for s in sents)
+
 
 if __name__ == "__main__":
     import sys

@@ -94,6 +94,28 @@ project = transcribe(
 
 `transcribe()` 返回 `SubtitleProject`；识别和对齐的耗时工作应从 Worker 调用，不能在 Qt 主线程直接调用。
 
+### 云端 ASR（SiliconFlow，可选后端）
+
+`TranscribeConfig.asr_backend`：`"local"`（默认，本地 Qwen3-ASR）| `"cloud"`（SiliconFlow HTTP）。
+`TranscribeConfig.cloud_asr`：仅云端模式下使用的 `CloudASRConfig`，本地为 `None`。
+
+```python
+from core.cloud_asr import CloudASRConfig, CloudASRResult, probe_models, transcribe_cloud
+
+cfg = CloudASRConfig(model="FunAudioLLM/SenseVoiceSmall", codec="opus")
+result = transcribe_cloud(audio_or_path, cfg=cfg)   # 只出文本，无字级时间戳
+result.text            # 已剥离说话人前缀，可直接喂给分句
+result.language        # 语言全名（"Chinese"）；无法确定时为 ""
+result.usage_seconds   # 平台计费用量，调用方应累加进本地台账
+result.segments        # 句级片段，仅 Diarize 系列返回
+```
+
+异常分层（均为 `CloudASRError` 子类）：`CloudASRAuthError`(401/403) · `CloudASRQuotaError`(402，**不可重试**) · `CloudASRParamError`(400/404) · `CloudASRRateLimitError`(429) · `CloudASRNetworkError`(5xx/网络) · `CloudASRLanguageError`（语言无法决议）。
+
+`probe_models()` 是**零成本探活**：只 `GET /v1/models` 验证 Key 与模型名，不产生任何用量。
+
+偏好新增 `Preferences.cloud_asr`：`base_url` / `api_key`（明文存 `preferences.json`，该文件已 gitignore）/ `model` / `codec` / `timeout_sec` / `accumulated_seconds` / `last_usage_seconds`。API Key 亦可改用环境变量 `QSS_SILICONFLOW_API_KEY`。
+
 ### 对齐
 
 ```python
@@ -157,7 +179,7 @@ sentences  指定 indices
 
 ## 5. UI 兼容入口
 
-`PlayerPanel` 是 UI 内部的兼容 façade，保留 `set_project()`、`set_preview_time()`、`preview_mode()`、播放/暂停/停止和状态 Signal。它不是独立 GUI SDK；UI 私有字段和 Qt 控件层级不属于公共 API。旧的 `from ui.player_panel import PlayerPanel, _VideoSubtitleStage` 导入兼容属于现役测试约束，但以下划线名称不应被新代码依赖。
+`PlayerPanel` 是 UI 内部的兼容 façade，保留 `set_project()`、`set_preview_time()`、`preview_mode()`、播放/暂停/停止和状态 Signal。它不是独立 GUI SDK；UI 私有字段和 Qt 控件层级不属于公共 API。包入口 `from ui.player import PlayerPanel, _VideoSubtitleStage` 的可用性属于现役测试约束（2026-10-05 由 `ui.player_panel` 收包而来），但以下划线名称不应被新代码依赖。
 
 ## 6. 错误与版本
 

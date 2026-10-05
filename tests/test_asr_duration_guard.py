@@ -84,7 +84,7 @@ def _fake_audio_info(duration: float) -> AudioInfo:
 
 # ─────────────────────────────────────────────────────────────
 
-def _case_transcribe_honors_cancel_before_work():
+def test_transcribe_honors_cancel_before_work():
     from core.task_control import TaskCancelled
 
     cfg = ae.TranscribeConfig(cancel_cb=lambda: True)
@@ -92,12 +92,15 @@ def _case_transcribe_honors_cancel_before_work():
         ae.transcribe("unused.wav", model_manager=_FakeModelManager(), cfg=cfg)
 
 
-def _case_transcribe_rejects_over_limit_audio():
+def test_transcribe_rejects_over_limit_audio():
     mp = pytest.MonkeyPatch()
     try:
-        mp.setattr(ae, "prepare_audio",
+        # 补丁要打在 .pipeline 上：transcribe 本体在 core.asr_engine.pipeline 里，
+        # 它按 pipeline.__dict__ 解析 prepare_audio / align_full_text；打包装名空间
+        # （ae.prepare_audio）只是换掉一份再导出的引用，调用点看不见。
+        mp.setattr(ae.pipeline, "prepare_audio",
                    lambda *a, **k: (Path("fake.wav"), _fake_audio_info(1200.1)))
-        mp.setattr(ae, "align_full_text",
+        mp.setattr(ae.pipeline, "align_full_text",
                    lambda **k: (_ for _ in ()).throw(AssertionError("守卫后不应走到对齐")))
         mm = _FakeModelManager()
 
@@ -111,12 +114,12 @@ def _case_transcribe_rejects_over_limit_audio():
     print("test_transcribe_rejects_over_limit_audio PASSED ✔")
 
 
-def _case_transcribe_boundary_exactly_max_passes():
+def test_transcribe_boundary_exactly_max_passes():
     mp = pytest.MonkeyPatch()
     try:
-        mp.setattr(ae, "prepare_audio",
+        mp.setattr(ae.pipeline, "prepare_audio",
                    lambda *a, **k: (Path("fake.wav"), _fake_audio_info(float(ASR_MAX_DURATION))))
-        mp.setattr(ae, "align_full_text", lambda project, **k: project)
+        mp.setattr(ae.pipeline, "align_full_text", lambda project, **k: project)
         mm = _FakeModelManager()
 
         project = ae.transcribe(
@@ -137,12 +140,6 @@ def _case_transcribe_boundary_exactly_max_passes():
         mp.undo()
     print("test_transcribe_boundary_exactly_max_passes PASSED ✔")
 
-
-def test_asr_duration_guard_pack():
-    """test_asr_duration_guard_pack：合并 3 个场景（断言逐条保留，见各 _case_*）。"""
-    _case_transcribe_honors_cancel_before_work()
-    _case_transcribe_rejects_over_limit_audio()
-    _case_transcribe_boundary_exactly_max_passes()
 
 if __name__ == "__main__":
     import sys
