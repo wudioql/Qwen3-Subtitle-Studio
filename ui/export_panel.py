@@ -14,7 +14,9 @@ from typing import Callable
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QDialog, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QDialog, QHBoxLayout, QLayout, QSizePolicy, QVBoxLayout, QWidget,
+)
 from qfluentwidgets import (
     CaptionLabel, CheckBox, ColorPickerButton, ComboBox, LineEdit,
     PrimaryPushButton, PushButton, ScrollArea, SimpleCardWidget, SubtitleLabel,
@@ -46,19 +48,56 @@ WORD_EXPORTS = [
 
 
 def _card_size_policy(widget: QWidget) -> None:
-    """卡片垂直策略：Preferred + 按宽算高声明。
+    """卡片垂直策略：Preferred + 按宽算高声明 + 布局用最小尺寸兜底。
 
-    此前为 Maximum——它把 sizeHint()（按宽敞宽度计算的高度）当成上限，
-    侧栏压窄后 wordWrap 说明文字换行增多、卡片需要更高，布局却拒绝分配
-    （高度钉死在旧 sizeHint）→ 文字上下截断 + 相邻卡片间冒出空白条。
-    Preferred 允许按需增高；heightForWidth 让外层布局按当前宽度重算高度；
-    面板末尾的 addStretch 吸收宽敞时的多余空间，卡片不会被无意义拉伸。
+    历史上修过两层根因（都保留）：
+    1. 卡片曾用Maximum——它把 sizeHint()（按宽敞宽度算的高度）当成上限，
+       侧栏压窄后 wordWrap 说明文字换行增多、卡片需要更高，布局却拒绝分配
+       → 文字上下截断 + 相邻卡片间冒出空白条；
+    2. wordWrap 标签的 sizePolicy 曾是 Ignored，丢掉了按宽算高。
+
+    但**这两条都不够**：QVBoxLayout 在 hasHeightForWidth 为真时，分配高度
+    仍可能不按标签当前宽度的换行结果走。2026-10-05 实测（W=222，
+    即 minimumSizeHint 的最小宽度）：`word_style` 卡实得 633而需要 689，
+    其内两个 wordWrap 标签实得 61 / 26，按`QTextLayout` 手工换行
+    真实需要 96 / 36 —— **文字确实放不下，是真截断不是度量误差**。
+
+    逐项排除过的可能（都无效，故不要重复试）：
+    - 标签 `setMinimumWidth(0/1)`：无效；
+    - 标签 vpolicy 改 `Minimum` / `Fixed` + `setHeightForWidth(True)`：无效；
+    - 标签 `setMinimumHeight(1)`：无效（但设成真实需求值如 110 立刻有效——
+      说明布局确实读minimumSizeHint，只是默认路径没走到）；
+    - `layout.invalidate() + activate()` 多次、多泵事件、先宽后窄、
+      调高面板高度、`ScrollArea.setWidgetResizable(False)`、改 inner 垂直策略：
+      全部无效（不是缓存或时序问题）。
+
+    真正的开关是 `QLayout.SetSizeConstraint(SetMinAndMaxSize)`：它让布局
+    以 `minimumSize`（即按当前宽度算出的按宽算高需求）作为硬下限，
+    超出可用高度时优先在有弹性的项上压缩而不是截断文字。
+    实测 W=200~340 连续扫描：截断点 51 → 0，且各宽度下所有 wordWrap
+    标签的实得高度均≥ `QTextLayout` 手工换行所需高度（不是靠省略号
+    换来的「看起来不截断」）。
+
+    **调用时机（易踩）**：本函数由各卡片 `__init__` 在建 `QVBoxLayout(self)`
+    *之前* 调用，此时 `widget.layout()` 仍是 `None`，拿不到布局对象，
+    约束加不上。故尺寸约束由 `_card_layout_constraint(lay)` 在布局建好后
+    单独施加；本函数只管 sizePolicy。**两者必须成对出现**，漏掉后者则
+    窄侧栏立刻回到截断状态（症状与修复前完全一致，不会报错）。
     """
     sp = widget.sizePolicy()
     sp.setHorizontalPolicy(QSizePolicy.Expanding)
     sp.setVerticalPolicy(QSizePolicy.Preferred)
     sp.setHeightForWidth(True)
     widget.setSizePolicy(sp)
+
+
+def _card_layout_constraint(layout) -> None:
+    """给卡片内容布局设尺寸约束；必须在 ``QVBoxLayout(self)`` 建好后调用。
+
+    根因与实测依据见 `_card_size_policy` 的文档字符串。
+    """
+    if layout is not None:
+        layout.setSizeConstraint(QLayout.SetMinAndMaxSize)
 
 
 def _refresh_player_preview(card: QWidget) -> None:
@@ -83,6 +122,7 @@ class _ExportGroup(SimpleCardWidget):
         _card_size_policy(self)
         self._buttons: list[PushButton] = []
         lay = QVBoxLayout(self)
+        _card_layout_constraint(lay)
         lay.setContentsMargins(14, 13, 14, 14)
         lay.setSpacing(8)
         heading = SubtitleLabel(title, self)
@@ -116,6 +156,7 @@ class WordStyleCard(SimpleCardWidget):
         _card_size_policy(self)
 
         lay = QVBoxLayout(self)
+        _card_layout_constraint(lay)
         lay.setContentsMargins(14, 13, 14, 14)
         lay.setSpacing(9)
         lay.addWidget(SubtitleLabel("逐字高亮", self))
@@ -297,6 +338,7 @@ class AssStyleCard(SimpleCardWidget):
         self._style = self._prefs.ass_style.to_style()
 
         lay = QVBoxLayout(self)
+        _card_layout_constraint(lay)
         lay.setContentsMargins(14, 13, 14, 14)
         lay.setSpacing(8)
         lay.addWidget(SubtitleLabel("ASS 文字样式", self))
@@ -348,6 +390,7 @@ class KaraokeTemplateCard(SimpleCardWidget):
         self._tpl = self._prefs.karaoke_template.to_prefs()
 
         lay = QVBoxLayout(self)
+        _card_layout_constraint(lay)
         lay.setContentsMargins(14, 13, 14, 14)
         lay.setSpacing(8)
         lay.addWidget(SubtitleLabel("Aegisub 卡拉OK效果", self))

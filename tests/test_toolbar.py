@@ -507,6 +507,135 @@ def test_panel_shrink_layout():
     print("test_panel_shrink_layout PASSED ✔")
 
 
+def _wrap_height_by_text_layout(label, width):
+    """按当前宽度手工换行，算标签显示**完整文本**所需高度。
+
+    刻意不用 ``label.heightForWidth()``：那条路径与被测的布局约束同源，
+    布局若以错误高度分配，它会跟着一起错，断言就成了自证。
+    ``QTextLayout`` 按字体度量独立换行，是外部判据。
+    """
+    from PySide6.QtGui import QTextLayout, QTextOption
+
+    layout = QTextLayout(label.text(), label.font())
+    layout.setTextOption(QTextOption())
+    layout.beginLayout()
+    total = 0.0
+    while True:
+        line = layout.createLine()
+        if not line.isValid():
+            break
+        line.setLineWidth(max(1, width))
+        total += line.height()
+    layout.endLayout()
+    return int(total) if total else label.fontMetrics().lineSpacing()
+
+
+def test_export_sidebar_text_never_truncated_across_widths():
+    """导出侧栏：任何宽度下 wordWrap 文字都必须完整显示（不得被压成省略号）。
+
+    回归背景（2026-10-05）：`word_style` 卡的``QVBoxLayout`` 缺
+    ``SetMinAndMaxSize`` 约束，压到``minimumSizeHint`` 的最小宽度 222 时，
+    卡实得 633而需要 689，其中两个 wordWrap 标签实得 61 / 26，按字体
+    真实需要 96 / 36——**文字确实放不下**，此前的deselect把它当成了
+    "字体度量环境差异"。
+
+    本测试用连续宽度扫描 + ``QTextLayout`` 手工换行做外部判据，
+    且刻意比``test_panel_shrink_layout`` 更严：后者只测 300/260/222
+    三个点、只查 ``word_style`` 里的标签，且用 Qt 自己的 heightForWidth。
+    """
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication(["test"])
+
+    from ui.export_panel import ExportPanel
+
+    card_names = ("_grp_sentence", "_grp_word", "word_style",
+                  "ass_style", "karaoke_template")
+    # 200~340 步长 2：覆盖 minimumSizeHint 的 220 到设计宽度 340
+    widths = range(200, 342, 2)
+    offenders = []
+    for W in widths:
+        panel = ExportPanel(on_export=lambda k: None)
+        try:
+            panel.resize(W, 900)
+            panel.show()
+            QApplication.processEvents()
+            for name in card_names:
+                card = getattr(panel, name)
+                layout = card.layout()
+                for i in range(layout.count()):
+                    item = layout.itemAt(i)
+                    widget = item.widget() if hasattr(item, "widget") else None
+                    if widget is None or not hasattr(widget, "wordWrap"):
+                        continue
+                    if not widget.wordWrap():
+                        continue
+                    geo = widget.geometry()
+                    need = _wrap_height_by_text_layout(widget, geo.width())
+                    if geo.height() < need - 1:
+                        offenders.append(
+                            f"W={W} {name}「{widget.text()[:16]}…」 "
+                            f"{geo.height()}<{need}"
+                        )
+        finally:
+            panel.close()
+    assert not offenders, "导出侧栏 wordWrap 文字被截断:\n" + "\n".join(offenders)
+
+
+def test_export_cards_layout_constraint_is_paired_with_size_policy():
+    """护栏：``_card_size_policy`` 与 ``_card_layout_constraint`` 必须成对出现。
+
+    两者都在卡片 ``__init__`` 里调用，但**调用时机不同**：前者要求在
+    ``QVBoxLayout(self)`` 之前（只改 sizePolicy），后者必须在之后
+    （要拿布局对象）。漏掉后者不会报错，只是窄侧栏悄悄回到截断状态，
+    症状与修复前完全一致——所以需要显式护栏。
+    """
+    from PySide6.QtWidgets import QApplication, QLayout, QSizePolicy
+    QApplication.instance() or QApplication(["test"])
+
+    from ui.export_panel import (
+        AssStyleCard, ExportPanel, KaraokeTemplateCard, WordStyleCard, _ExportGroup,
+    )
+
+    panel = ExportPanel(on_export=lambda k: None)
+    try:
+        assert panel.layout() is not None
+        cards = [
+            panel._grp_sentence, panel._grp_word, panel.word_style,
+            panel.ass_style, panel.karaoke_template,
+        ]
+        # 逐一断言：存在且为 SetMinAndMaxSize
+        for card in cards:
+            layout = card.layout()
+            assert layout is not None, f"{type(card).__name__} 没有内容布局"
+            assert layout.sizeConstraint() == QLayout.SetMinAndMaxSize, (
+                f"{type(card).__name__} 缺 SetMinAndMaxSize 约束，"
+                f"窄侧栏会截断 wordWrap 文字"
+            )
+            # sizePolicy 侧同样不能丢
+            policy = card.sizePolicy()
+            assert policy.hasHeightForWidth(), \
+                f"{type(card).__name__} 丢了 hasHeightForWidth"
+            assert policy.verticalPolicy() == QSizePolicy.Policy.Preferred, \
+                f"{type(card).__name__} 垂直策略应为 Preferred"
+
+        # 构造即生效：新建的卡也必须已带约束（防止只修了 ExportPanel 里的实例）
+        for cls in (WordStyleCard, AssStyleCard, KaraokeTemplateCard):
+            card = cls()
+            try:
+                assert card.layout().sizeConstraint() == QLayout.SetMinAndMaxSize, \
+                    f"新建 {cls.__name__} 未带尺寸约束"
+            finally:
+                card.close()
+        group = _ExportGroup("t", "s", [], lambda k: None)
+        try:
+            assert group.layout().sizeConstraint() == QLayout.SetMinAndMaxSize, \
+                "新建 _ExportGroup 未带尺寸约束"
+        finally:
+            group.close()
+    finally:
+        panel.close()
+
+
 def _widget_in_bar(widget, bar) -> bool:
     """该控件是否真的摆在 ``bar`` 里。
 

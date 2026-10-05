@@ -6,26 +6,37 @@
 
 ## 项目定位
 
-- **识别**：Qwen3-ASR-1.7B 原生 Transformers API
+- **识别**：Qwen3-ASR-1.7B 原生 Transformers API（本地），或 SiliconFlow 云端 ASR（只出文本，字级时间戳仍由本地对齐器产出）
 - **对齐**：Qwen3-ForcedAligner-0.6B（口语）或 MMS-FA ONNX（歌词）
 - **编辑**：句级、字/词级、波形边界、Undo/Redo、锁定/脏标记
 - **预览**：PySide6 `QVideoSink` 同画布兼容预览；可选 libmpv/libass 真 ASS 预览
 - **导出**：SRT、VTT、ASS、LRC 等句级与逐字产物，共 11 个导出入口
 - **工程**：工程 JSON（`schema_version=1`）、偏好 JSON、文件系统媒体和模型资源
 
-## 当前状态（审计快照：2026-08-30）
+## 当前状态（审计快照：2026-10-05）
 
-| 范围 | 状态 | 证据 / 边界 |
-|---|---|---|
-| 源码语法 | `verified-current` | `compileall` 通过 |
-| 字幕模型、导入导出、纯逻辑 | `verified-current` | 纯逻辑与离屏合同测试通过；具体收集数不写死，以 `pytest -q -m logic` 当前结果为准 |
-| 本机完整 ASR/对齐 E2E | `verified-current` | 用户确认本机完整 E2E 正常；根目录三件参考资源由本项目生成，属于链路自洽验证，不是独立数据集基准 |
-| 本机 libmpv/libass | `verified-current` | 用户确认本机测试 OK，可正常使用 |
-| Aegisub / mpv.net 字幕兼容性 | `verified-current` | 用户确认各类字幕文件均已实际测试支持 |
-| PotPlayer 兼容性 | `verified-current` | 除 `\kf` 无法逐字扫过、只能整字亮外，其余字幕均正常 |
-| 硬字幕烧录、Nuitka 分发 | `unplanned` | 当前没有明确规划、排期、验收标准或对应 UI/分发产物 |
+表里的状态词含义见 [DEVELOPMENT.md](DEVELOPMENT.md) §8。**证据列同时标明取证日期**：自动化行由本次快照当场重跑得到，用户确认行来自用户本机实测、无法由 CI 复现。
 
-本次沙箱没有重新执行用户本机的 Windows/CUDA E2E；上表的本机状态以用户确认作为证据。完整验证命令和证据边界见 [DEVELOPMENT.md](DEVELOPMENT.md) 与 [DEPLOYMENT.md](DEPLOYMENT.md)。
+| 范围 | 状态 | 证据 / 边界 | 证据日期 |
+|---|---|---|---|
+| 源码语法与静态检查 | `verified-current` | 本机 `compileall` 通过；`ruff check .` 全绿 | 2026-10-05 |
+| 纯逻辑、字幕模型、导入导出 | `verified-current` | 本机 `pytest -q`全绿（详见下方「测试基线」） | 2026-10-05 |
+| 云端 ASR（SiliconFlow）后端 | `implemented-pending` | 取文本、计费账本、逐句语种判定均有单测；但真实 HTTP 调用依赖用户自备API Key，且不在 `e2e/` 与 pytest 套件内，门禁无法复现 | 2026-10-04 |
+| 本机完整 ASR/对齐 E2E | `verified-current` | 用户确认各功能均正常工作，且模型未变动，故行为与上次实测一致；根目录三件参考资源由本项目生成，属于链路自洽验证，不是独立数据集基准 | 2026-10-05 |
+| 本机 libmpv/libass | `verified-current` | 同上（用户确认；模型与播放链路未变动） | 2026-10-05 |
+| Aegisub / mpv.net 字幕兼容性 | `verified-current` | 同上（用户确认；字幕导出代码未变动） | 2026-10-05 |
+| PotPlayer 兼容性 | `verified-current` | 同上；除 `\kf` 无法逐字扫过、只能整字亮外，其余字幕均正常 | 2026-10-05 |
+| 硬字幕烧录、Nuitka 分发 | `unplanned` | 当前没有明确规划、排期、验收标准或对应 UI/分发产物 | — |
+
+### 测试基线
+
+本机 `pytest -q` 于 2026-10-05 **全绿**（此前唯一的失败
+`test_toolbar.py::test_panel_shrink_layout` 已定位并修复：导出侧栏卡片缺
+`QLayout.SetMinAndMaxSize` 约束，压到最小宽度 222px 时两个 `word_wrap`
+说明标签被真实截断——按字体度量分别需要 96px / 36px 却只拿到 61px / 26px，
+非度量误差）。
+
+完整验证命令和证据边界见 [DEVELOPMENT.md](DEVELOPMENT.md) 与 [DEPLOYMENT.md](DEPLOYMENT.md)。
 
 ## 快速开始
 
