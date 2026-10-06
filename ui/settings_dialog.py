@@ -11,7 +11,7 @@ from typing import Optional
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QLayout,
-    QScrollArea, QStackedWidget, QVBoxLayout, QWidget,
+    QScrollArea, QStackedWidget, QStyle, QVBoxLayout, QWidget,
 )
 from qfluentwidgets import (
     CheckBox, ComboBox, DoubleSpinBox, LineEdit, Pivot,
@@ -78,8 +78,79 @@ class _PageHost(QWidget):
         return self._scroll.widget()
 
     def content_height(self) -> int:
-        """该页内容在当前视口宽度下真正需要的高度（含换行标签的增量）。"""
-        return _measure_page_height(self.page, max(1, self._scroll.viewport().width()))
+        """该页内容在**可信宽度**下真正需要的高度（含换行标签的增量）。
+
+        见 ``_credible_measure_width``：宽度不可信时不能作答。
+        """
+        return _measure_page_height(self.page, self._credible_measure_width())
+
+    def _credible_measure_width(self) -> int:
+        """返回「可真实出现」的视口宽度，用于按宽算高。
+
+        为什么需要这个下限
+        ------------------
+        ``heightForWidth`` 的前提是「这个宽度真的出现过」。构造期弹窗尚未
+        ``show``，几何全是未收敛的默认值：实测 asr 页视口宽仅 **98px**，
+        而它自身的 ``minimumSizeHint().width()`` 是 **348px**——98 不是
+        「窄」，是**还没布局**。在 98px 处换行行数被严重高估，
+        ``_measure_page_height`` 返回 455，而该页任何真实状态都只需 ≤ 287；
+        cloud_asr 页更离谱：98px 处算出 **3520**，真实上界 582（6 倍）。
+
+        下限取 ``page.minimumSizeHint().width()`` 而非某个魔法阈值
+        ----------------------------------------------------------
+        ``_apply_width_bounds`` 把「弹窗宽度 ≥ 最宽页 minimumSizeHint 宽
+        + 视口外边距**与垂直滚动条**」设成硬下限（见 ``_chrome_width``），
+        因此**视口宽度永远 ≥ 各页自身 minimumSizeHint 宽**。这个下限是代码
+        自身已建立的不变量，不是拍脑袋的阈值：低于它的宽度根本不可能出现，
+        ≥ 它的都是真实状态。
+
+        ⚠️ 这条不变量**曾经是假的**，别再削回去：2026-10-06 复查实测
+        ``_CHROME_W`` 漏算了垂直滚动条（48 vs 实测 58），使 ``cloud_asr`` 页
+        在弹窗宽 608~617 这 10px 带内视口宽 550 < 该页最小宽 560。
+        本机字体下该带内高度恰好没差（低估 0px），但那是运气——换字体
+        （Linux CI 就是）就可能跨过换行阈值变成真实低估。故滚动条宽必须计入。
+
+        在这个下限处测量得到的是**所有可信状态里的最大**内容高度
+        （越窄→换行越多→越高，实测 6 页在可信区内 ``need`` 均随宽度单调不增）。
+        即：宁可高估一点点让滚动条出现，也不低估导致内容被裁且滚不到底。
+        """
+        return max(self._scroll.viewport().width(), self.page.minimumSizeHint().width(), 1)
+
+    def sync_minimum_height(self) -> None:
+        """把页面最小高度对齐到真实内容高度，保证溢出永远滚得到底。
+
+        为什么必须显式设最小高度
+        ----------------------
+        ``setWidgetResizable(True)`` 下，滚动区给页面的高度是
+        ``max(视口高, 页面 minimumHeight)``。而 ``QWidget.minimumSizeHint()``
+        **不含 wordWrap 标签按宽换行多出来的那截**——实测缺口（need 是内容
+        在可信宽度下的真实高度，minH 是Qt 自己算的最小高）：
+
+            页need    minH   缺口
+            asr            259    231     28
+            cloud_asr      582    446    136
+            segmentation   353    311     42
+            advanced       423    381     42
+
+        缺口造成一个**底部永久不可达**的死区。设视口高 ``vp``：
+
+        - ``vp >= need``：装得下，没事；
+        - ``vp <= minH``：页面保住 minH，滚动范围 = minH - vp，能滚到底；
+        - ``minH < vp < need``：页面被压成 **恰好 vp 高**（比 minH 高、比 need 矮），
+          溢出的那截既没算进 minH、也不进滚动范围 → ``sb_max == 0``、
+          内容底部**怎么滚都看不到**。
+
+        实测在 Windows 上就能复现：segmentation 页need=353、视口 350 时
+        ``sb_max=0``、reach=350 < 353；advanced 页 need=423、视口 420 同样。
+        2026-10-06 Linux CI 上asr 页报 ``need=267 可达 251``，正是这个死区。
+
+        设了最小高度后，``widgetResizable`` 只能给「视口高或内容高度」，
+        溢出必然进滚动范围。实测危险区间扫描：3 页不可达 → **0 页**。
+
+        必须在**每次切页**时重算（而非构造期一次）：各页 need 不同
+        （102 ~ 582），且用户拖宽度会改变换行行数。
+        """
+        self.page.setMinimumHeight(self.content_height())
 
 
 def _measure_page_height(page: QWidget, width: int) -> int:
@@ -111,8 +182,21 @@ class SettingsDialog(QDialog):
     #: 2026-10-05 用户反馈「为啥现在直接调不了高度了」——高度必须让用户自由决定，
     #: 内容超出靠每页自己的滚动区（见 ``_PageHost``），不由弹窗高度兜。
     _MIN_H = 380
-    #: 弹窗根布局四周留白（``root.setContentsMargins``）与滚动区边框的横向合计。
-    _CHROME_W = 22 * 2 + 4
+    #: 弹窗根布局左右留白（``root.setContentsMargins`` 的 22*2）。
+    _MARGIN_W = 22 * 2
+    #: 视口外那一圈除留白外的占用：**垂直滚动条**宽度。
+    #:
+    #: 2026-10-06 复查实测：这里原先写死 ``22 * 2 + 4 = 48``，那个``4``是
+    #: 按「无滚动条」估的框宽，而实际最窄时**垂直滚动条必然可见**（内容装不下）。
+    #: 实测拆解：弹窗 608 → 视口 550，差 58 = 留白 44 + 滚动条 **14** + 余量 0。
+    #: 于是最窄时视口宽 550 < ``cloud_asr`` 页自身的 minimumSizeHint 宽 **560**，
+    #: 打破了 ``_PageHost._credible_measure_width`` 依赖的不变量
+    #: （「视口宽度≥ 各页自身 minimumSizeHint 宽」），危险带宽10px（弹窗 608~617）。
+    #: 本机字体下该带内need 恰好与按真实宽一致（低估 0px），**但这是运气**——
+    #: 换字体（Linux CI 就是）可能跨过换行阈值变成真实低估 → 内容被裁且滚不到底。
+    #: 所以宽度下限必须把滚动条算进去。用 ``PM_ScrollBarExtent`` 取而非写死 14，
+    #: 因为它随平台/样式变化（Linux 上未必是 14）。
+    _CHROME_W = _MARGIN_W
 
     def __init__(self, parent=None, prefs: Optional[Preferences] = None):
         super().__init__(parent)
@@ -228,6 +312,7 @@ class SettingsDialog(QDialog):
             self._pivot.setCurrentItem(key)
             # 切页时**按当前页内容调一次高度**（用户明确要求保留这个行为）。
             # 只在切页这一刻调——手动拖动高度时绝不回弹（见 resizeEvent）。
+            host.sync_minimum_height()
             self._fit_height_to_page()
 
     def _fit_height_to_page(self) -> None:
@@ -244,15 +329,49 @@ class SettingsDialog(QDialog):
         host = self._stack.currentWidget()
         if not isinstance(host, _PageHost):
             return
+        # 先把页面最小高度对齐到内容高度，再据此算目标高度——顺序不能反：
+        # 目标高度来自内容测量，而最小高度决定内容装不下时能否滚到底。
+        host.sync_minimum_height()
         need = host.content_height()
-        # chrome = 弹窗高度 - 内容区高度（标题 + Pivot + 按钮行 + 边距 +
-        # 可能出现的滚动条）。**实测差值**，不用公式猜。
-        chrome_h = max(self.height() - self._stack.height(), 0)
+        chrome_h = self._chrome_height()
         screen = self.screen() or QApplication.primaryScreen()
         avail = int(screen.availableGeometry().height() * 0.92) if screen else 900
         target = min(max(need + chrome_h, self._MIN_H), avail)
         if abs(target - self.height()) > 1:
             self.resize(self.width(), target)
+
+    def _chrome_height(self) -> int:
+        """除内容区以外占掉的高度（标题 + Pivot + 按钮行 + 边距 + 间距）。
+
+        为什么不用「``self.height() - self._stack.height()``」实测差值
+        ------------------------------------------------------
+        那个差值只在几何**已收敛**时才对。构造期（``__init__`` 末尾的
+        ``_apply_initial_height``）弹窗尚未 ``show``，实测差值会退化：
+
+        - 第一次测量：stack 与弹窗都还是默认 30px → 差值 **0**
+          → ``target`` 少了整整一个 chrome（实测 165px），弹窗被定矮。
+        - 第二次测量：布局已收敛 → 差值 165，正常。
+
+        Windows 上第二次调用会自我修正，Linux/CI 上不一定——所以不能靠
+        「后面还有一次会修好」。改成**结构式**测量：直接按根布局里除stack
+        之外各项的 sizeHint 累加，任何时候都成立。
+
+        实测两者在显示后**完全相等**（结构式 165 = 实测差值 165），
+        说明这不是又一个近似，而是把同一个量换个更可靠的算法算出来。
+        """
+        root = self.layout()
+        if root is None:
+            return 0
+        margins = root.contentsMargins()
+        total = margins.top() + margins.bottom()
+        count = root.count()
+        for i in range(count):
+            item = root.itemAt(i)
+            if item.widget() is self._stack:
+                continue  # 内容区本身，不算进 chrome
+            total += item.sizeHint().height()
+        total += root.spacing() * max(0, count - 1)
+        return total
 
     def _apply_initial_height(self) -> None:
         """首次打开给一个体面的初始高度（按第一页内容）。
@@ -265,22 +384,46 @@ class SettingsDialog(QDialog):
         """按「最宽页的 minimumSizeHint」设定弹窗宽度下限。
 
         为什么需要（2026-10-05 真机实测）：视口宽 = 弹窗宽 - 根布局边距(22*2)
-        - 滚动区边框。若视口窄于某页的 minimumSizeHint（云端 ASR页实测 560，
+        - **垂直滚动条**。若视口窄于某页的 minimumSizeHint（云端 ASR 页实测 560，
         由模型行 ComboBox 的 340 + 「刷新清单」按钮共同撑起），该页右边会被
         横向裁掉。这里让弹窗**至少**能容纳最宽页，从源头消除裁切，
         比「出了滚动条让用户自己拖」体验好得多。
+
+        这条下限同时是 ``_credible_measure_width`` 的**不变量前提**：只要
+        「视口宽 ≥ 各页自身 minimumSizeHint 宽」恒成立，按「页最小宽」测量
+        就是**安全的高估**（越窄→换行越多→越高），绝不会低估导致裁切。
+        所以滚动条宽度必须算进来——见 ``_CHROME_W`` 的说明。
         """
         widest = 0
         for i in range(self._stack.count()):
             host = self._stack.widget(i)
             page = host.page if isinstance(host, _PageHost) else host
             widest = max(widest, page.minimumSizeHint().width())
-        need_w = widest + self._CHROME_W
+        need_w = widest + self._chrome_width()
         # 别把上限也顶穿：留至少 40px 的可拖动余量，否则用户没法拖宽。
         self._MIN_W = max(self._MIN_W, need_w)
         self._MAX_W = max(self._MAX_W, self._MIN_W + 40)
         self.setMinimumWidth(self._MIN_W)
         self.setMaximumWidth(self._MAX_W)
+
+    def _chrome_width(self) -> int:
+        """视口外的横向占用 = 根布局左右留白 + 垂直滚动条宽。
+
+        为什么滚动条宽要用 ``PM_ScrollBarExtent`` 现取而不是写死 14
+        ------------------------------------------------------
+        2026-10-06 复查实测：原先 ``_CHROME_W = 22*2+4 = 48`` 漏掉了滚动条
+        （实测差值 58 = 44 + 14），使最窄时视口 550 < ``cloud_asr`` 页最小宽
+        560，打破 ``_credible_measure_width`` 依赖的不变量（危险带 10px）。
+        滚动条宽度随平台与样式变化，Linux 上未必是 14，故现取。
+
+        取不到样式（``style()`` 为 None）时退回 0：宁可少算一点，
+        也别因样式查询失败把弹窗撑得比内容还宽。
+        """
+        extent = 0
+        style = self.style()
+        if style is not None:
+            extent = style.pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
+        return self._CHROME_W + extent
 
     @staticmethod
     def _form_page() -> tuple[QWidget, QFormLayout]:

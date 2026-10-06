@@ -9,6 +9,21 @@
 - 硬字幕烧录及其 UI。
 - Nuitka 便携分发、安装包和对应 SBOM 流程。
 
+## [2026-10-06] — Linux CI 三条失败的定位与修复
+
+### Fixed
+
+- **偏好设置弹窗：视口落在死区时内容底部永久不可达**（2026-10-06 Linux CI 两条失败的真正机制，**与平台无关、Windows 同样能复现**）。`QScrollArea` 在 `setWidgetResizable(True)` 下给页面的高度是 `max(视口高, 页面 minimumHeight)`，而 `QWidget.minimumSizeHint().height()` **不含 wordWrap 标签按宽换行多出来的那截**——实测缺口 asr 28px、cloud_asr 136px、segmentation 42px、advanced 42px。于是存在一个死区：视口高落在 `(minH, need)` 之间时，页面被压成**恰好视口高**（比 minH 高、比 need 矮），溢出的那截既没算进 minH 也不进滚动范围，`sb_max == 0`、底部怎么滚都看不到。实测 segmentation 页 need=353、视口 350 时 `reach=350 < 353`；advanced 页 need=423、视口 420 同样。修法：`ui/settings_dialog.py::_PageHost.sync_minimum_height()` 在每次切页时把页面 `minimumHeight` 对齐到 `content_height()`（各页 need 从 102 到 582不等，且拖宽度会改变换行行数，故不能只在构造期设一次）。实测危险区间扫描：3 页不可达 → **0 页**。
+- **偏好设置弹窗：构造期在「不可能出现的宽度」上测量内容高度**。`__init__` 末尾的 `_apply_initial_height()` 触发时弹窗尚未 `show`，几何全是未收敛的默认值——实测 asr 页视口宽只有 **98px**，而该页自身 `minimumSizeHint().width()` 是 **348px**。98 不是「窄」而是「还没布局」，在这个宽度上 `heightForWidth` 的换行行数被严重高估：`content_height()` 返回 455，而该页任何真实状态都只需 ≤ 287；cloud_asr 页更离谱，98px 处算出 **3520**，真实上界 582（6 倍）。修法：`content_height()` 改经 `_credible_measure_width()`，宽度下限取 `page.minimumSizeHint().width()`——这**不是魔法阈值**，而是宽度下限已建立的不变量（弹窗宽度下限保证视口 ≥ 各页自身最小宽），低于它的宽度根本不可能出现。在该下限处测得的是所有可信状态里的**最大**高度（实测 6 页在可信区内 `need` 均随宽度单调不增），即宁可高估一点让滚动条出现，也不低估导致内容被裁。构造期 need 实测 **455 → 287**。
+- **偏好设置弹窗：宽度下限漏算垂直滚动条，险些打破上一条依赖的不变量**（复查上述修复时发现）。宽度下限原先用 `22*2+4 = 48` 作为「视口外占用」，那个 `4` 是按无滚动条估的框宽；但最窄时**垂直滚动条必然可见**，实测拆解是 `弹窗 608 - 视口 550 = 58 = 留白 44 + 滚动条 14 + 余量 0`。于是 `cloud_asr` 页在弹窗宽 **608~617** 这 10px 带内视口宽 550 < 该页最小宽 **560**——上一条修复的前提被打破，按下限测量会转成**低估**（按更宽的 560 换行→行数更少→高度偏小）。本机字体下该带内高度恰好没差（低估 0px），**但那是运气**：换字体（Linux CI 就是）就可能跨过换行阈值变成真实裁切。修法：新增 `_chrome_width()` 用 `QStyle.PixelMetric.PM_ScrollBarExtent` **现取**滚动条宽（随平台/样式变化，Linux 上未必是 14，故不写死）；`style()` 为 None 时退回 0，避免样式查询失败反把弹窗撑宽。实测弹窗最小宽 608 → **618**，6 页危险带 **10px → 0**。
+- **偏好设置弹窗：`chrome_h` 在构造期退化成 0**。原先用 `self.height() - self._stack.height()` 实测差值，而构造期两者都还是 Qt 默认 30px，差值为 **0**——目标高度少算整整一个 chrome（实测 165px），弹窗被定矮。Windows 上「后面还有一次调用」会自我修正，Linux 上不一定，故不能依赖补救。改为结构式测量 `SettingsDialog._chrome_height()`：按根布局里除 stack 外各项的 `sizeHint` 累加，任何时候都成立；实测显示后它与原实测差值**完全相等**（165 = 165），说明不是又一个近似，而是同一个量的更可靠算法。
+- **测试可移植性**：`tests/test_cloud_asr.py::test_encoding_stage_reports_real_progress_from_ffmpeg` 在 Linux 上失败并非产品缺陷，而是**脚手架**问题——假 ffmpeg 用 `.bat` 启动器，Linux 不可执行（`Permission denied`），产品侧按设计静默降级为 WAV，于是断言 `codec == 'opus'` 挂掉。现按 `os.name == "nt"` 分支出 `.bat` 与 `#!/bin/sh` + `chmod(0o755)`（缺可执行位同样 Permission denied，不能只改扩展名）。
+- 新增四条护栏（`tests/test_settings_dialog.py`）：`test_settings_dialog_construction_need_not_measured_at_unreal_width`（hook `_fit_height_to_page` 抓构造期那一帧，断言 need 不超过可信上界）、`test_settings_dialog_chrome_height_valid_before_show`（构造期 chrome 必须等于显示后实测差值）、`test_settings_dialog_overflow_reachable_in_dead_zone`（逐步压低视口扫遍死区，判据用纯函数 `_measure_page_height` 独立重算而非被测的 `content_height`）、`test_settings_dialog_viewport_never_below_page_min_width`（逐页逐宽度直接量真实几何，守住 `_credible_measure_width` 的地基不变量）。全部均已逐项「回退修复 → 确认变红 → 恢复」验证。
+
+### Changed
+
+- `AGENTS.md` §6.3 补两条约定：① **「本地全绿 ≠ CI 全绿」，且本地复现不出来时先怀疑「本地根本没走到那条路径」**——本轮两条护栏在 `show()` 之后断言，回退修复后照样passed（几何已收敛，测不到构造期缺陷），这是「恒真断言」的隐蔽版本：不是没写断言，而是断言点选在了 bug 消失之后；② **CI 失败要先分清产品 bug 与测试可移植性问题**，并记录 `.bat` / `chmod(0o755)` 这类可执行文件脚手架的跨平台写法。
+
 ## [2026-10-05] — 云端 ASR 接入与测试收尾
 
 ### Added

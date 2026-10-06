@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 import pathlib
 import re
 import subprocess
@@ -1205,8 +1206,11 @@ def test_encoding_stage_reports_real_progress_from_ffmpeg(monkeypatch, tmp_path)
 
     # 假 ffmpeg：带 -progress 时按 ffmpeg 真实格式吐进度行并落盘；
     # 否则（时长探测）往 stderr 打印 Duration 行。
-    # 用 .bat 包一层是因为 ``ffmpeg_path`` 只接受**可执行文件路径**，
+    # 需要一层**可执行启动器**，因为 ``ffmpeg_path`` 只接受可执行文件路径，
     # 直接给 python.exe 会把第一个 ffmpeg 参数当成脚本名。
+    # 启动器必须**跨平台**：Windows 用 .bat，POSIX 用带 shebang 的 .sh
+    # （2026-10-06 Linux CI 实测Permission denied —— .bat 在 Linux 不可执行，
+    # 产品侧静默降级为 WAV，断言 codec == 'opus' 就挂了）。
     script = tmp_path / "fake_ffmpeg.py"
     script.write_text(
         "import sys, pathlib\n"
@@ -1220,11 +1224,18 @@ def test_encoding_stage_reports_real_progress_from_ffmpeg(monkeypatch, tmp_path)
         "    sys.stderr.write('  Duration: 00:00:10.00, start: 0.0, bitrate: 1 kb/s\\n')\n",
         encoding="utf-8",
     )
-    bat = tmp_path / "fake_ffmpeg.bat"
-    bat.write_text(f'@"{sys.executable}" "{script}" %*\n', encoding="utf-8")
+    if os.name == "nt":
+        launcher = tmp_path / "fake_ffmpeg.bat"
+        launcher.write_text(f'@"{sys.executable}" "{script}" %*\n', encoding="utf-8")
+    else:
+        launcher = tmp_path / "fake_ffmpeg.sh"
+        launcher.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n', encoding="utf-8"
+        )
+        launcher.chmod(0o755)  # 没有可执行位，subprocess 会 Permission denied
     # 直接填好探测缓存：audio_io.ensure_ffmpeg 会短路返回，不会真去跑
     # 冒烟探测（那要求能真的从真实媒体抽音，假的可执行文件过不了）。
-    monkeypatch.setattr(audio_io, "_FFMPEG_CHOSEN", str(bat))
+    monkeypatch.setattr(audio_io, "_FFMPEG_CHOSEN", str(launcher))
     monkeypatch.setattr(audio_io, "_FFMPEG_CHOSEN_OVERRIDE",
                         audio_io._current_ffmpeg_override())
     src = tmp_path / "in.wav"
@@ -1232,7 +1243,7 @@ def test_encoding_stage_reports_real_progress_from_ffmpeg(monkeypatch, tmp_path)
 
     events: list[tuple[int, int, str]] = []
     payload = ca.encode_for_upload(
-        src, codec="opus", ffmpeg_path=str(bat),
+        src, codec="opus", ffmpeg_path=str(launcher),
         progress_cb=lambda d, t, s: events.append((d, t, s)),
     )
     assert payload.codec == "opus"

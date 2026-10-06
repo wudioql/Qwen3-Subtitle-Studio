@@ -13,14 +13,14 @@
 - **导出**：SRT、VTT、ASS、LRC 等句级与逐字产物，共 11 个导出入口
 - **工程**：工程 JSON（`schema_version=1`）、偏好 JSON、文件系统媒体和模型资源
 
-## 当前状态（审计快照：2026-10-05）
+## 当前状态（审计快照：2026-10-06）
 
 表里的状态词含义见 [DEVELOPMENT.md](DEVELOPMENT.md) §8。**证据列同时标明取证日期**：自动化行由本次快照当场重跑得到，用户确认行来自用户本机实测、无法由 CI 复现。
 
 | 范围 | 状态 | 证据 / 边界 | 证据日期 |
 |---|---|---|---|
-| 源码语法与静态检查 | `verified-current` | 本机 `compileall` 通过；`ruff check .` 全绿 | 2026-10-05 |
-| 纯逻辑、字幕模型、导入导出 | `verified-current` | 本机 `pytest -q`全绿（详见下方「测试基线」） | 2026-10-05 |
+| 源码语法与静态检查 | `verified-current` | 本机 `compileall` 通过；`ruff check .` 全绿 | 2026-10-06 |
+| 纯逻辑、字幕模型、导入导出 | `verified-current` | 本机 `pytest -q` = 365 passed / 0 failed（详见下方「测试基线」） | 2026-10-06 |
 | 云端 ASR（SiliconFlow）后端 | `implemented-pending` | 取文本、计费账本、逐句语种判定均有单测；但真实 HTTP 调用依赖用户自备API Key，且不在 `e2e/` 与 pytest 套件内，门禁无法复现 | 2026-10-04 |
 | 本机完整 ASR/对齐 E2E | `verified-current` | 用户确认各功能均正常工作，且模型未变动，故行为与上次实测一致；根目录三件参考资源由本项目生成，属于链路自洽验证，不是独立数据集基准 | 2026-10-05 |
 | 本机 libmpv/libass | `verified-current` | 同上（用户确认；模型与播放链路未变动） | 2026-10-05 |
@@ -30,11 +30,25 @@
 
 ### 测试基线
 
-本机 `pytest -q` 于 2026-10-05 **全绿**（此前唯一的失败
-`test_toolbar.py::test_panel_shrink_layout` 已定位并修复：导出侧栏卡片缺
-`QLayout.SetMinAndMaxSize` 约束，压到最小宽度 222px 时两个 `word_wrap`
-说明标签被真实截断——按字体度量分别需要 96px / 36px 却只拿到 61px / 26px，
-非度量误差）。
+本机 `pytest -q` 于 2026-10-06 **全绿，365 passed / 0 failed**。
+
+此前唯一的失败 `test_toolbar.py::test_panel_shrink_layout` 已于 2026-10-05 定位并修复：
+导出侧栏卡片缺 `QLayout.SetMinAndMaxSize` 约束，压到最小宽度 222px 时两个
+`word_wrap` 说明标签被真实截断——按字体度量分别需要 96px / 36px 却只拿到
+61px / 26px，非度量误差。
+
+2026-10-06 Linux CI 另有三条失败，已定位并修复（详见 `CHANGELOG.md` 同日段）：
+两条是偏好设置弹窗的**真实缺陷**——构造期在不可能出现的视口宽度（实测 98px，
+而该页最小宽 348px）上测量内容高度、`chrome_h` 构造期退化成 0，以及视口落在
+`(页面最小高, 内容高)` 死区时**内容底部永久不可达**（`sb_max == 0`）；第三条
+是测试脚手架的跨平台问题（假 ffmpeg 用 `.bat` 启动器，Linux 不可执行），
+产品代码本身无缺陷。
+
+同日复查还发现：弹窗宽度下限漏算垂直滚动条的宽度（用 48 而实测应为 58），
+使「视口宽 ≥ 各页最小宽」这个被测量算法依赖的前提在 10px 宽度带内不成立，
+会让按宽测高从「安全高估」翻成**低估**。本机字体下恰好未触发，换字体即可能
+真实裁切。已改为用 `QStyle.PixelMetric.PM_ScrollBarExtent` 现取滚动条宽度，
+并补护栏直接量这个不变量。
 
 完整验证命令和证据边界见 [DEVELOPMENT.md](DEVELOPMENT.md) 与 [DEPLOYMENT.md](DEPLOYMENT.md)。
 
