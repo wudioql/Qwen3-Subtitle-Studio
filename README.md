@@ -13,14 +13,14 @@
 - **导出**：SRT、VTT、ASS、LRC 等句级与逐字产物，共 11 个导出入口
 - **工程**：工程 JSON（`schema_version=1`）、偏好 JSON、文件系统媒体和模型资源
 
-## 当前状态（审计快照：2026-10-06）
+## 当前状态（审计快照：2026-10-07）
 
 表里的状态词含义见 [DEVELOPMENT.md](DEVELOPMENT.md) §8。**证据列同时标明取证日期**：自动化行由本次快照当场重跑得到，用户确认行来自用户本机实测、无法由 CI 复现。
 
 | 范围 | 状态 | 证据 / 边界 | 证据日期 |
 |---|---|---|---|
-| 源码语法与静态检查 | `verified-current` | 本机 `compileall` 通过；`ruff check .` 全绿 | 2026-10-06 |
-| 纯逻辑、字幕模型、导入导出 | `verified-current` | 本机 `pytest -q` = 365 passed / 0 failed（详见下方「测试基线」） | 2026-10-06 |
+| 源码语法与静态检查 | `verified-current` | 本机 `compileall` 通过；`ruff check .` 全绿 | 2026-10-07 |
+| 纯逻辑、字幕模型、导入导出 | `verified-current` | 本机 `pytest -q` = 378 passed / 0 failed（详见下方「测试基线」） | 2026-10-07 |
 | 云端 ASR（SiliconFlow）后端 | `implemented-pending` | 取文本、计费账本、逐句语种判定均有单测；但真实 HTTP 调用依赖用户自备API Key，且不在 `e2e/` 与 pytest 套件内，门禁无法复现 | 2026-10-04 |
 | 本机完整 ASR/对齐 E2E | `verified-current` | 用户确认各功能均正常工作，且模型未变动，故行为与上次实测一致；根目录三件参考资源由本项目生成，属于链路自洽验证，不是独立数据集基准 | 2026-10-05 |
 | 本机 libmpv/libass | `verified-current` | 同上（用户确认；模型与播放链路未变动） | 2026-10-05 |
@@ -30,7 +30,8 @@
 
 ### 测试基线
 
-本机 `pytest -q` 于 2026-10-06 **全绿，365 passed / 0 failed**。
+本机 `pytest -q` 于 2026-10-07 **全绿，378 passed / 0 failed**（较 2026-10-06 的 365 条 +13：
+多语言全文重对齐「真实时间裁窗」回归 +3、逐句语种「日/韩→英」+2、人声轨守卫 +8）。
 
 此前唯一的失败 `test_toolbar.py::test_panel_shrink_layout` 已于 2026-10-05 定位并修复：
 导出侧栏卡片缺 `QLayout.SetMinAndMaxSize` 约束，压到最小宽度 222px 时两个

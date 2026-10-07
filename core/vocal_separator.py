@@ -22,7 +22,7 @@ import numpy as np
 import soundfile as sf
 import librosa
 
-from .constants import TEMP_DIR, ensure_temp_dir
+from .constants import TEMP_DIR, VOCALS_CACHE_PREFIX, ensure_temp_dir
 from .audio_io import ensure_ffmpeg
 from .task_control import TaskCancelled, raise_if_cancelled
 
@@ -404,6 +404,37 @@ def get_vocal_separator(
     return _GLOBAL_SEPARATOR
 
 
+def vocals_cache_path(media_path: Path | str) -> Path:
+    """人声分离的确定性缓存路径（**命名合同唯一真源**）。
+
+    指纹 = 源媒体 ``stem + size + mtime_ns``：媒体内容一变，缓存自然失效。
+    产出方（``extract_vocals_to_wav``）与判定方（``is_vocals_track_of`` 及
+    ``ui.project_controller`` 的「是否已用人声轨」守卫）共用本函数，避免各自
+    拼名字导致判据漂移。源媒体不存在时抛 ``OSError``，由调用方决定兜底。
+    """
+    p = Path(media_path)
+    st = p.stat()
+    return TEMP_DIR / f"{VOCALS_CACHE_PREFIX}{p.stem}_{st.st_size}_{st.st_mtime_ns}.wav"
+
+
+def is_vocals_track_of(media_path: Path | str | None, audio_path: Path | str | None) -> bool:
+    """``audio_path`` 是否**就是** ``media_path`` 的人声分离产物（且缓存仍在）。
+
+    ⚠️ **不能**用「``audio_path`` != ``media_path``」代替：``audio_path`` 的语义是
+    「已提取的 16kHz mono WAV」，容器媒体（mp4/mkv/mov…）经 FFmpeg 降采样后同样满
+    足该不等式，会被误判成「已用人声轨」——表现为**任何视频一导入就报「无需重复
+    提取」**。判据落在命名合同上（精确路径相等）才不会被提取件冒名。
+    回归护栏：``tests/test_vocal_track_guard.py``。
+    """
+    if not media_path or not audio_path:
+        return False
+    try:
+        target = vocals_cache_path(media_path)
+    except OSError:  # 源媒体不存在 → 无从判定；此时更不该拦住用户
+        return False
+    return Path(audio_path) == target and target.is_file()
+
+
 def extract_vocals_to_wav(
     media_path: Path | str,
     output_path: Optional[Path | str] = None,
@@ -428,8 +459,7 @@ def extract_vocals_to_wav(
     cache_path: Path | None = None
     if output_path is None:
         ensure_temp_dir()
-        st = p.stat()
-        cache_path = TEMP_DIR / f"vocals_{p.stem}_{st.st_size}_{st.st_mtime_ns}.wav"
+        cache_path = vocals_cache_path(p)
         if cache_path.exists():
             try:
                 info = sf.info(str(cache_path))
@@ -481,5 +511,6 @@ def extract_vocals_to_wav(
 
 __all__ = [
     "VocalSeparator", "get_vocal_separator", "extract_vocals_to_wav",
+    "vocals_cache_path", "is_vocals_track_of",
     "_estimate_mdx_working_set_bytes",
 ]

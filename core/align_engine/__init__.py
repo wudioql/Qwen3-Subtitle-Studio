@@ -4,8 +4,13 @@
     config    AlignConfig / AudioSource / 进度回调
     common    裁剪、接缝吸附、语言决议、分词依赖预检
     sentence  单句对齐（Qwen raw + MMS + 超长子切）
-    full      全文重对齐（单段 / 静音切块）
+    words     语言决议 + 字级切回 + 事务提交（原语层）
+    chunking  长媒体切块机制（计划 / 执行 / 收集）
+    full      全文重对齐（策略层：派发 / 单段 / 切块 / 两阶段）
     project   整项目按句 / 仅脏句
+
+分层单向：config / common → sentence, project；config / common → words → chunking
+→ full。``__init__`` 是唯一 façade，包外只碰 ``__init__``。
 
 对外仍：``from core.align_engine import AlignConfig, align_full_text, ...``
 """
@@ -27,11 +32,11 @@ from .sentence import (
     align_sentence_raw,
     _align_long_sentence,
 )
+from .words import _resolve_language_segments
 from .full import (
     align_full_text,
     _align_full_text_chunked,
     _align_full_text_single,
-    _resolve_language_segments,
 )
 from .project import align_dirty_only, align_project
 from core.mms_aligner import get_mms_aligner

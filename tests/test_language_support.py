@@ -173,7 +173,8 @@ def test_sentence_language_priority_over_project():
             for i, w in enumerate(extract_pure_words(text))
         ]
 
-    def fake_align_ctx(audio_tuple, prev_text, text, next_text, *, language, offset_sec=0.0):
+    def fake_align_ctx(audio_tuple, prev_text, text, next_text, *, language,
+                       offset_sec=0.0, prev_language=None, next_language=None):
         fake_align.calls.append(language)
         return [
             WordTimestamp(text=w, start_time=offset_sec + i * 0.2, end_time=offset_sec + i * 0.2 + 0.15)

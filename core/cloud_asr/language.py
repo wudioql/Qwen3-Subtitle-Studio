@@ -180,8 +180,24 @@ _MIXED_ZH_EN_PATCH_MODELS: frozenset[str] = frozenset({
 
 
 def supports_zh_en_sentence_split(model: str) -> bool:
-    """该模型是否启用「整段中/粤 → 逐句切出英文」补丁。见 :data:`_MIXED_ZH_EN_PATCH_MODELS`。"""
+    """该模型是否启用「整段中/粤→ 逐句切出英文」补丁。见 :data:`_MIXED_ZH_EN_PATCH_MODELS`。"""
     return model in _MIXED_ZH_EN_PATCH_MODELS
+
+
+#: 整段语种为这些语言时，**同样**启用「逐句切出英文」（用户 2026-10-07 拍板）。
+#:
+#: 为什么日/韩要单列一档而不是并入中/粤那一档：日语句子天然含汉字（Kanji），
+#: 「日本語勉強中」实测是 ``han=6 / kana=0`` —— 连假名都没有。若沿用中/粤的
+#: 「含汉字 → 沿用整段语种」判据，日整段里的英文句会被汉字拖累而被漏判。
+#: 所以日/韩走一条**独立分支**：只挡独占脚本（假名/谚文/西里尔），不挡汉字。
+#:
+#: 明确**不在**本档内（用户拍板：中/粤里一般不混日韩，日/韩里一般不混中粤）：
+#: - 中/粤 ↔ 日/韩 互判：不做。宁可漏判也不猜错语种污染时间轴。
+#: - 俄语等其它语言：不做，同上。
+_JA_KO_TO_EN: frozenset[str] = frozenset({
+    LANG_SHORT_TO_FULL["ja"],
+    LANG_SHORT_TO_FULL["ko"],
+})
 
 
 def split_zh_en_sentence_language(
@@ -199,9 +215,12 @@ def split_zh_en_sentence_language(
     用户拍板的范围（刻意从简，属**已知缺陷**的定点缓解，不是通用方案）：
 
     - 单段单语言是 ASR 模型的**硬性限制**（本地/云端 Qwen3、SenseVoice 实测均返回
-      单一 language），理论上的其它语言混入**不做判定**——只处理中英这一种。
+      单一 language），理论上的其它语言混入**不做判定**——只处理「整段语言→英文」
+      这一种方向（用户 2026-10-07 拍板：中/粤里一般不混日韩，反向同理）。
     - 整段为中/粤时，**纯英文**句（无汉字、无假名/谚文/西里尔）切出为 ``English``；
       含汉字的句子一律沿用整段语种（粤语因此不会被误标为中文）。
+    - 整段为日/韩时（见 :data:`_JA_KO_TO_EN`）**同样**切出英文句，但判据不同：
+      不挡汉字（日语 Kanji 与汉字同码区），只挡假名/谚文/西里尔。
     - 仅对 :data:`_MIXED_ZH_EN_PATCH_MODELS` 里的模型生效；其它模型返回 ``None``，
       调用方据此沿用整段语种（粤语需求可手动选对齐模型，或直接不用这些模型）。
 
@@ -215,15 +234,30 @@ def split_zh_en_sentence_language(
     """
     if not supports_zh_en_sentence_split(model):
         return None
-    # 只在「整段是中文或粤语」时才切英文：整段已是英文/日语时无需再判。
-    if project_lang not in (LANG_SHORT_TO_FULL["zh"], LANG_SHORT_TO_FULL["yue"]):
-        return None
     if not text or not text.strip():
         return None
     counts = _script_counts(text)
-    if counts["han"] or counts["kana"] or counts["hangul"] or counts["cyrillic"]:
+    counts_latin = counts["latin"]
+    counts_kana = counts["kana"]
+    counts_hangul = counts["hangul"]
+    counts_cyrillic = counts["cyrillic"]
+    # 整段是中/粤 → 切英文；整段是日/韩 → 也切英文（用户拍板，见 _JA_KO_TO_EN）。
+    if project_lang in _JA_KO_TO_EN:
+        # 日语句子天然含汉字（Kanji）：「日本語勉強中」是 han=6 / kana=0，
+        # 连假名都不一定有。因此这里**不能**沿用中/粤的「含汉字→沿用整段」判据，
+        # 只能挡下仍带本地独占脚本的句子——那些必定不是英文。
+        # 韩语同理（谚文独占，无歧义）。
+        if counts_kana or counts_hangul or counts_cyrillic:
+            return None
+        if counts_latin:
+            return LANG_SHORT_TO_FULL["en"]
+        return None
+    # 只在「整段是中文或粤语」时才切英文
+    if project_lang not in (LANG_SHORT_TO_FULL["zh"], LANG_SHORT_TO_FULL["yue"]):
+        return None
+    if counts["han"] or counts_kana or counts_hangul or counts_cyrillic:
         return None          # 含汉字/其它独占脚本 → 沿用整段语种（保护粤语不被误标）
-    if counts["latin"]:
+    if counts_latin:
         return LANG_SHORT_TO_FULL["en"]
     return None              # 纯标点/数字碎片 → 沿用整段语种
 

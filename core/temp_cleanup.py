@@ -21,16 +21,19 @@ import logging
 import re
 import time
 
-from .constants import TEMP_DIR, TEMP_MAX_AGE_DAYS, LOG_MAX_BYTES
+from .constants import TEMP_DIR, TEMP_MAX_AGE_DAYS, LOG_MAX_BYTES, VOCALS_CACHE_PREFIX
 
 logger = logging.getLogger(__name__)
 
 
 # 确定性缓存名（跨会话保留）：
 #   提取缓存 {stem}_{size}_{mtime}__sr{sr}_ch1.wav（core.audio_io.prepare_audio）
-#   人声缓存 vocals_{stem}_{size}_{mtime}.wav（core.vocal_separator.extract_vocals_to_wav）
+#   人声缓存 {VOCALS_CACHE_PREFIX}{stem}_{size}_{mtime}.wav（core.vocal_separator）
+# 人声前缀取自 constants 的唯一真源——不要在这里另写一份字面量。
 _EXTRACT_CACHE_RE = re.compile(r"__sr\d+_ch1\.wav$", re.IGNORECASE)
-_VOCALS_CACHE_RE = re.compile(r"^vocals_.+_\d+_\d+\.wav$", re.IGNORECASE)
+_VOCALS_CACHE_RE = re.compile(
+    "^" + re.escape(VOCALS_CACHE_PREFIX) + r".+_\d+_\d+\.wav$", re.IGNORECASE,
+)
 
 
 def _is_cache_wav(name: str) -> bool:

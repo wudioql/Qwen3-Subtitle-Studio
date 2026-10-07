@@ -32,6 +32,16 @@ def ensure_temp_dir() -> Path:
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
     return TEMP_DIR
 
+# ── .temp/ 确定性缓存命名合同（生产者与消费者共用的唯一真源）──────────────
+# 两种缓存都靠「源媒体 stem + size + mtime_ns」做内容指纹，跨会话复用：
+#   提取件  {stem}_{size}_{mtime}__sr{sr}_ch1.wav          生产者 core.audio_io.prepare_audio
+#   人声件  {VOCALS_CACHE_PREFIX}{stem}_{size}_{mtime}.wav  生产者 core.vocal_separator
+# 消费者：core/temp_cleanup.py（按名判定保留/清理）、core/vocal_separator.py
+# （vocals_cache_path / is_vocals_track_of）、ui/project_controller.py（判定当前音频轨）。
+# ⚠️ 两者**必须可区分**：即使源媒体自己就叫 `vocals_xxx.mp4`，其提取件名尾是
+# `__sr16000_ch1.wav`、人声件名尾是 `_{size}_{mtime}.wav`，判据不会互相误判。
+VOCALS_CACHE_PREFIX: str = "vocals_"
+
 # 临时文件保留天数（启动清理时删除超过此天数的残留 wav / chunk 子目录）
 TEMP_MAX_AGE_DAYS: int = 3
 

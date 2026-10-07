@@ -233,12 +233,14 @@ def _mock_mms(calls: list):
     mock = MagicMock()
     mock.is_available.return_value = True
 
-    def fake_align(audio_tuple, text, *, language, offset_sec=0.0):
+    def fake_align(audio_tuple, text, *, language, offset_sec=0.0,
+                   word_languages=None, **_kwargs):
         calls.append({
             "language": language,
             "text": text,
             "offset": offset_sec,
             "n_samples": len(audio_tuple[0]),
+            "word_languages": word_languages,
         })
         return [
             WordTimestamp(text=w, start_time=offset_sec + i * 0.25,
@@ -284,11 +286,13 @@ def test_resolve_segments_grouping_and_eleven_langs():
         _resolve_language_segments(proj3, AlignConfig(source_language="auto"))
 
     # ── resolve segments all eleven languages ─────────────────────────
-    # 11 种语言逐句交错 → 11 段、各携官方全名（不再只是中/日/韩）
+    # 11 种语言逐句交错 → 按 Qwen **分词器族**收敛（同族合并为一次调用）：
+    # 前 6 种（中/英/粤/法/德/意）共用默认「CJK 逐字 + 空格词」分词器 → 1 段；
+    # ja / ko 各 1 段；后 3 种（葡/俄/西）又共用默认分词器 → 1 段。
     proj = _mk_project(_ELEVEN)
     segs = _resolve_language_segments(proj, AlignConfig(source_language="auto"))
-    assert [lang for lang, _ in segs] == _ELEVEN_FULL
-    assert all(len(sents) == 1 for _, sents in segs)
+    assert [lang for lang, _ in segs] == ["Chinese", "Japanese", "Korean", "Portuguese"]
+    assert [len(sents) for _, sents in segs] == [6, 1, 1, 3]
 
 
 def test_single_path_segments_dispatch_and_backend_lang():
@@ -308,12 +312,14 @@ def test_single_path_segments_dispatch_and_backend_lang():
          patch("core.audio_io.load_audio", return_value=(audio, 16000)):
         align_full_text(proj, model_manager=mm, cfg=AlignConfig(align_backend="mms", source_language="auto"))
 
-    assert [c["language"] for c in calls] == ["Chinese", "Japanese", "Chinese"]
-    assert [c["text"] for c in calls] == ["风掠过指尖。", "桜の花が咲きました。", "墨香未干。"]
-    # 混语段按各自时间窗裁剪（非零 offset 段 = 有裁剪）
-    assert calls[0]["offset"] == 0.0            # 首段起点在 0
-    assert calls[1]["offset"] > 0.0             # 后续段从句界前移 pad 起
-    # 逐句词序列完整切回 + 语言标注正确
+    assert [c["language"] for c in calls] == ["Chinese"]
+    # MMS 语言**不进模型**：zh/ja/zh 合并为整段一次调用、零裁剪
+    assert calls[0]["text"] == "风掠过指尖。 桜の花が咲きました。 墨香未干。"
+    assert calls[0]["offset"] == 0.0
+    assert calls[0]["n_samples"] == len(audio)
+    # 逐句语言经 word_languages 逐句给出（罗马化读音用），无需按语言切音频
+    assert calls[0]["word_languages"] is not None
+    # 逐句词序列完整切回 + 语言标注仍正确
     for s, expect_lang, cnt in zip(proj.sentences, ["Chinese", "Japanese", "Chinese"], [5, 9, 4]):
         got = [w.text for w in s.words if not w.is_punct]
         assert got == extract_pure_words(s.text)
@@ -387,8 +393,9 @@ def test_single_path_segments_dispatch_and_backend_lang():
          patch("core.audio_io.load_audio", return_value=(audio, 16000)):
         align_full_text(proj, model_manager=mm, cfg=AlignConfig(align_backend="mms", source_language="auto"))
 
-    assert [c["language"] for c in calls] == _ELEVEN_FULL
-    assert len(calls) == 11
+    # MMS 整段一次调用（语言不进模型）；逐句 word.language 仍按句回填
+    assert len(calls) == 1
+    assert calls[0]["language"] == "Chinese"
     for s, expect_lang in zip(proj.sentences, _ELEVEN_FULL):
         got = [w.text for w in s.words if not w.is_punct]
         assert got == extract_pure_words(s.text)
@@ -429,8 +436,8 @@ def test_multilang_context_entered_once_not_per_segment():
     )
     assert ctx.__enter__.call_count == 1
     assert ctx.__exit__.call_count == 1
-    # 三段语言 → 三次 align 推理，但共用同一 Session
-    assert len(calls) == 3
+    # MMS 语言不进模型 → 整段一次 align 推理（不再按语言段各一次）
+    assert len(calls) == 1
 
     # —— Qwen：using_aligner 只 enter 一次 ——
     proj2 = _mk_project([
@@ -466,9 +473,14 @@ def test_multilang_context_entered_once_not_per_segment():
     assert qwen_calls == ["Chinese", "Japanese"]
 
 
-def test_chunked_path_language_segments_and_lock_restore():
-    # ── chunked path language segments and lock restore ─────────────────────────
-    # 四句、两种语言交错，时间轴铺满 >300s（会让整媒体切块，但段内各 ≤240s）
+def test_chunked_path_single_group_and_lock_restore():
+    """长媒体切块路径：MMS 不按语言分段（语言不进模型），整媒体按静音点切块。
+
+    旧行为是「每个语言段各自裁窗、各自切块」，段窗来自句级占位时间 →
+    段内内容对不上。现在全部句合并为一个 group，块窗来自整段媒体 + 静音点。
+    锁定句保护在 chunked 路径与 single 路径同等生效。
+    """
+    # 四句、两种语言交错，时间轴铺满 >300s
     proj = _mk_project([
         ("开场白第一句。", "zh"),
         ("さくらひらひら。", "ja"),
@@ -493,9 +505,11 @@ def test_chunked_path_language_segments_and_lock_restore():
          patch("core.audio_io.load_audio", return_value=(audio, 16000)):
         align_full_text(proj, model_manager=mm, cfg=AlignConfig(align_backend="mms", source_language="auto"))
 
-    # 每段独立一次调用（各段时长 ~4s，远小于 240s 块上限 → 每段 1 块）
-    assert [c["language"] for c in calls] == ["Chinese", "Japanese", "Chinese", "Japanese"]
-    # 各句按语言切回（锁定句除外）
+    # 全部句一个 group → 400s 按 240s 块上限切 2 块；块语言 = 组代表语言
+    assert len(calls) == 2
+    assert all(c["language"] == "Chinese" for c in calls)
+    assert calls[0]["offset"] == 0.0
+    # 各句按词数精确切回（锁定句除外）
     assert proj.sentences[0].has_word_level()
     assert proj.sentences[2].has_word_level()
     assert proj.sentences[3].has_word_level()

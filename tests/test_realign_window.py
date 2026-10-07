@@ -392,16 +392,19 @@ def test_dirty_realign_seam_matches_fulltext():
 
 
 def test_fulltext_multilang_seam_snap():
-    """全文重对齐（多语言分段）后段间接缝也必须吸附。
+    """全文重对齐（多语言）后句间接缝也必须吸附。
 
-    旧 bug：full.py 已 import snap_tail 却从未调用；按语言分段时每段自有
-    帧网格，段尾→下段首常出现 ≤25ms 空隙，用户可见「前后句 25ms 内空白
-    未填」。
+    旧 bug：full.py 已 import snap_tail 却从未调用，句尾→下句首的 ≤25ms
+    空隙无人填，用户可见「前后句 25ms 内空白未填」。
+
+    族收敛后中/英同属 Qwen 默认分词器族，已合并为**一次**调用；接缝不再来自
+    「每段各自的帧网格」，但同一张 20ms 帧网格上仍会出现「尾字停在 1.98、
+    下句首从 2.0 起」这类 20ms 缝，吸附逻辑必须继续生效。
     """
     from core.align_engine import AlignConfig, align_full_text, apply_seam_snaps
     from core.text_utils import extract_pure_words
 
-    # 两段语言：中→英；中段尾字刻意停在 1.98，英段从 2.0 起（20ms 缝）
+    # 中段尾字刻意停在 1.98，英段首字从 2.0 起（20ms 缝）
     proj = SubtitleProject(
         audio_path="mock.wav",
         media_duration=10.0,
@@ -413,18 +416,15 @@ def test_fulltext_multilang_seam_snap():
     audio = np.zeros(16000 * 10, dtype=np.float32)
     calls: list = []
 
+    # 整段一次调用（zh+en 同族 → 一次）；3 个纯词各自的时间窗
+    _word_times = [(0.0, 1.0), (1.0, 1.98), (2.0, 2.4)]
+
     def _align_side_effect(audio_tuple, text, *, language="", offset_sec=0.0, **kw):
         calls.append(language)
         pure = extract_pure_words(text)
-        # 按语言返回：中文段末字 1.98；英文段从 2.0 起
-        if language == "Chinese":
-            return [
-                WordTimestamp(text=pure[0], start_time=0.0, end_time=1.0),
-                WordTimestamp(text=pure[1], start_time=1.0, end_time=1.98),
-            ]
         return [
-            WordTimestamp(text=w, start_time=2.0 + i * 0.4, end_time=2.0 + i * 0.4 + 0.35)
-            for i, w in enumerate(pure)
+            WordTimestamp(text=w, start_time=t0, end_time=t1)
+            for w, (t0, t1) in zip(pure, _word_times)
         ]
 
     mock = MagicMock()
@@ -440,12 +440,15 @@ def test_fulltext_multilang_seam_snap():
             cfg=AlignConfig(align_backend="mms", source_language="auto"),
         )
 
-    assert calls == ["Chinese", "English"]
+    assert calls == ["Chinese"]
     front = res.sentences[0]
     assert front.words[-1].end_time == 2.0, (
-        f"全文多语言段间接缝应吸附：尾字 end={front.words[-1].end_time} 期望 2.0"
+        f"全文多语言句间接缝应吸附：尾字 end={front.words[-1].end_time} 期望 2.0"
     )
     assert front.end_time == 2.0
+    # 逐句语言标注仍正确（一次调用不代表语言被抹平）
+    assert all(w.language == "Chinese" for w in res.sentences[0].words)
+    assert all(w.language == "English" for w in res.sentences[1].words)
 
     # apply_seam_snaps 幂等：再跑一次不应改变
     n2 = apply_seam_snaps(res)

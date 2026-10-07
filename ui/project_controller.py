@@ -223,10 +223,17 @@ class ProjectController:
 
     @staticmethod
     def _has_vocal_audio(project) -> bool:
-        """当前工程的音频轨是否已经是提取出来的人声（而非原始媒体）。"""
-        ap = project.audio_path or ""
-        src = project.source_media_path or ""
-        return bool(ap) and ap != src
+        """当前工程的音频轨是否**已经**是「人声分离」产物。
+
+        判据委托给 ``core.vocal_separator.is_vocals_track_of``（人声缓存命名合同的
+        唯一真源）。**不要**退回 ``audio_path != source_media_path``：``audio_path``
+        的语义是「已提取的 16kHz mono WAV」，容器媒体（mp4/mkv/mov…）经 FFmpeg 降
+        采样后同样满足该不等式——那会让**任何视频一导入，点「人声提取」就报「无需
+        重复提取」**（原生可直读的 mp3/wav/flac 因不产生提取件反而正常）。
+        回归护栏：``tests/test_vocal_track_guard.py``。
+        """
+        from core.vocal_separator import is_vocals_track_of
+        return is_vocals_track_of(project.source_media_path, project.audio_path)
 
     def _finish_vocal_prep(self, path: Path, audio_path, info, vocal_extracted: bool) -> None:
         """人声提取完成：换音频轨 + 重载波形，**保留全部字幕**。

@@ -6,7 +6,18 @@ on:
 
 jobs:
   linux-cpu:
-    runs-on: ubuntu-latest
+    # 钉住 24.04，不用 `ubuntu-latest`。
+    #
+    # 官方公告（actions/runner-images#14748）：`ubuntu-latest` 自 2026-10-19 起
+    # 逐步迁到 Ubuntu 26.04，11-19 完成。**改标签会静默换掉整条 CI 的平台**——
+    # 本项目的 Qt 离屏渲染与 CPU Torch 轮子对 glibc/kernel 敏感，而
+    # 「本地 Windows 全绿、Linux 才炸」已经发生过一次（2026-10-06 三条CI 失败）。
+    # 迁移要**显式、可追溯**，而不是被一条 notice 悄悄改掉。
+    #
+    # 选 24.04 而非 26.04：24.04 是本工作流当前实际跑通的版本，钉住它等于
+    # 零行为变化；等真要迁移时，用 `ubuntu-26.04` 单独开一个 job 试跑，
+    # 通过了再改这一行（Ubuntu 24.04 生命周期到 2029，短期内不会被迫迁移）。
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7

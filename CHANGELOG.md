@@ -4,10 +4,50 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **任何容器媒体（mp4/mkv/mov/avi/webm/ts/flv/wmv/m4a/aac）导入后点「人声提取」都被误拦为「当前工程已在使用提取出的人声音轨，无需重复提取」**，按钮实际变成死键。根因是 `ui/project_controller.py::_has_vocal_audio` 用 `audio_path != source_media_path` 判定，而 `audio_path` 的语义是「已提取的 16kHz mono WAV」（`subs/models.py`）——它既可能是 FFmpeg 降采样提取件，也可能是人声分离产物，**路径不相等这一个条件分不出是哪一种**。容器媒体经 `prepare_audio()` 提取后 `audio_path` 必然 ≠ 源媒体，于是刚导入就被判成「已用人声轨」；原生可直读的 mp3/wav/flac 因不产生提取件（`audio_path` 保持等于源路径）反而正常，这正是「不是所有媒体都报错」的原因。该守卫与其 `extract_vocals_now` 一同在 e16e3d3 新加，**从未对容器媒体正确过**，且零测试覆盖。修法：判据改走人声缓存**命名合同**（新增 `core.vocal_separator.vocals_cache_path()` / `is_vocals_track_of()`，此前缀下沉为 `constants.VOCALS_CACHE_PREFIX` 唯一真源，`core/temp_cleanup.py` 的缓存名正则一并改为复用它、不再另写字面量）。新判据要求与「源媒体的人声缓存路径」**精确相等且文件仍在**，提取件名尾是 `__sr16000_ch1.wav`、人声件名尾是 `_{size}_{mtime}.wav`，即使源媒体自己叫 `vocals_*.mp4` 也不会串味；源媒体缺失、缓存被龄期清理、文件名对不上时一律放行（宁可重跑，不可误拦）。回归 `tests/test_vocal_track_guard.py`（8 条，含 UI 守卫层用例；经「回退到旧判据 → 5 条变红 → 恢复」验证非恒真）。
+
+- **首次全文重对齐按「语言段」用句级占位时间裁音频 → 段内内容完全对不上**。ASR（`core/asr_engine/sentences.py::_text_only_to_sentences`，字符占比均分）与纯文本导入（`subs/subtitle_io.py`，`media_duration/len(texts)`）产出的句级时间都是**占位值**，而 `full.py` 在 `n_seg > 1` 时用语言段的 `[min(start_time), max(end_time)]` 裁音频。单语项目 `n_seg == 1` 零裁剪所以免疫——是「按语言分段」把原本能自愈的流程弄坏了。探针实测 3 段（中/英/中）占位窗被裁成 `[0,4.94]/[4.70,25.83]/[25.59,30]`，而真实语音是 中 0-10 / 英 10-20 / 中 20-30。修法见 Changed：分段按分词器族收敛 + 多族冲突走两阶段（阶段一真实时间 → 阶段二裁窗）。**音频窗只剩两个合法来源：① 静音/长度切块；② 阶段一真实时间。**
+
+### Changed
+
+- **全文重对齐分段由「按语言」改为「按 Qwen 分词器族」**（`core/language_utils.tokenizer_family`）。实测官方 `split_words_for_alignment` 只对 `Japanese`/`Korean` 分支切到 nagisa / soynlp，其余语言（含 `None`/中/粤/英/法…）共用同一条默认「CJK 逐字 + 空格词」路径且**输出逐字等价**——中英混排原本被拆成两段纯属多余，现在合并为**一次调用、零裁剪**。ja/ko 单独出现（含夹英文）传对应语言即可；只有 ja/ko 与 zh/yue/en 同段混排才是真·分词器冲突。
+- **MMS 后端不再按语言分段**：语言不进 ONNX 模型，只影响罗马化读音（数字拼读 / 日语 pykakasi）。改为整段一次调用，逐句读音语言经 `MMSAligner.align(..., word_languages=...)` 传入；`align_with_context` 新增 `prev_language`/`next_language`，让邻句 token 的读音用对语言。
+- 逐句 `word.language` 标注改由各句语言分别回填（族收敛后一个 default 段可含多语言）。
+- 文档同步：`ARCHITECTURE.md` 新增 §4.2.2「全文重对齐：分段按分词器族、音频窗只用真实时间」；`AGENTS.md` 逐句语种判定条目改写（去掉「单次调用仅支持单语言」的旧表述）并补 MMS 邻句语言参数。新增回归 `tests/test_full_align_real_time_crop.py`（3 条，经「回退到占位裁剪 → 确认变红 → 恢复」验证非恒真）。
+- **`core/align_engine/full.py` 由单文件拆为「原语层 / 机制层 / 策略层」三模块**。改写后该文件从 390 行涨到 748 行，超过 `AGENTS.md §6.1`「单文件 ≳500 行且 ≥2 稳定子域 → 改包」的阈值，故按子域拆开：`words.py`（语言决议 `_resolve_language_segments` / 字级切回 `_assign_words`·`_commit_one`·`_commit_span` / `_build_word_languages` / 收尾 `_finish_full_text` / 族判定）、`chunking.py`（`_plan_jobs`·`_media_span`·`_run_jobs`·`_commit_collected`）、`full.py`（派发 `align_full_text` + 单段 + 切块编排 + 两阶段）。依赖单向 `config`/`common → words → chunking → full`，无环；`__init__.py` 仍是唯一 façade 且只再导出，`from core.align_engine import _resolve_language_segments` 等对外名**全部不变**——包外只有 `core/align_engine/__init__.py` 一处 `from .full import`，且无任何模块或测试 patch `core.align_engine.full.*`，故 §6.1 的「patch 打在名字被查找的地方」风险为零。
+
 ### Unplanned
 
 - 硬字幕烧录及其 UI。
 - Nuitka 便携分发、安装包和对应 SBOM 流程。
+
+## [2026-10-07] — 逐句语种判定扩展「日/韩→英」
+
+### Added
+
+- **逐句语种判定新增「日/韩整段 → 切出英文句」**。此前只有中/粤整段会切出纯英文句，
+  日/韩整段里的英文句会沿用整段语种、被送进日/韩对齐器。判据与中/粤**故意不同**：
+  日语句子天然含汉字（Kanji 与汉字同码区，实测 `日本語勉強中` 为 `han=6 / kana=0`，
+  连假名都没有），故该分支**不挡汉字**，只挡假名/谚文/西里尔——沿用中/粤的
+  「含汉字即沿用整段」判据会漏判。适用范围不变（`facts.py` 账本里的模型）。
+  中/粤↔日/韩互判与俄语等**刻意不做**（用户拍板：这些混入形式不常见，
+  宁可漏判也不猜错语种污染时间轴）。回归判据 `tools/check_ja_ko_en_split.py`
+  （42 项矩阵：18 错判 → 0），护栏见 `tests/test_cloud_asr.py` 两条新用例，
+  全部经「回退修复 → 确认变红 → 恢复」验证非恒真。
+
+### Changed
+
+- `AGENTS.md` 逐句语种判定条目改写：原条目称「仅云端路径传入 `sentence_language_fn`，
+  本地路径不传」，与代码不符——`asr_engine/pipeline.py` 早已对**本地与云端同时**开启
+  逐句判定（本地默认 Qwen3 正是混说素材的主要来源）。条目同时补上日/韩分支的判据要点
+  与 `tools/` 判据脚本位置。
+- `DEVELOPMENT.md` 目录树里 `tools/` 的定位由「环境探针」改为「环境探针与判据自检脚本」，
+  并补充说明两类文件的区别：长期驻留的环境探针（`env_check_native_api.py`、
+  `cloud_models_cli.py`，前者是发布前门禁）vs 可重跑的判据自检脚本
+  （`check_ja_ko_en_split.py`）。明确**一次性诊断探针不留在仓库**——
+  结论固化进 `tests/` 护栏或提交说明后即删。
 
 ## [2026-10-06] — Linux CI 三条失败的定位与修复
 
@@ -22,6 +62,7 @@
 
 ### Changed
 
+- **CI runner 标签钉在 `ubuntu-24.04`**（`.github/workflows/quality.yml`），不再用 `ubuntu-latest`。官方公告 `actions/runner-images#14748`：`ubuntu-latest` 自 **2026-10-19** 起逐步迁到 Ubuntu 26.04、**11-19** 完成，届时会**静默换掉整条 CI 的平台**。本项目的 Qt 离屏渲染与 CPU Torch 轮子对 glibc/kernel 敏感，而「本地 Windows 全绿、只有 Linux 炸」已经真实发生过一次（同日三条 CI 失败），故平台迁移必须显式、可追溯，不能被一条 notice 悄悄改掉。选 24.04 而非 26.04：它是当前实际跑通的版本，钉住等于零行为变化，同时消掉日志里的迁移提示。Ubuntu 24.04 标准支持到 2029，短期内不会被强制迁移；真要迁移时先用独立 `ubuntu-26.04` job 试跑，通过了再改这一行。
 - `AGENTS.md` §6.3 补两条约定：① **「本地全绿 ≠ CI 全绿」，且本地复现不出来时先怀疑「本地根本没走到那条路径」**——本轮两条护栏在 `show()` 之后断言，回退修复后照样passed（几何已收敛，测不到构造期缺陷），这是「恒真断言」的隐蔽版本：不是没写断言，而是断言点选在了 bug 消失之后；② **CI 失败要先分清产品 bug 与测试可移植性问题**，并记录 `.bat` / `chmod(0o755)` 这类可执行文件脚手架的跨平台写法。
 
 ## [2026-10-05] — 云端 ASR 接入与测试收尾

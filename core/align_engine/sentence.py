@@ -239,6 +239,16 @@ def align_sentence(
             if mms_ctx is not None:
                 mms = mms_ctx.__enter__()
             if use_ctx:
+                # 邻句语言：让邻句 token 的罗马化读音（数字拼读 / 日语 pykakasi）
+                # 用对语言——中英混排里英文邻句的数字不该按中文读法展开。
+                prev_lang = (
+                    _infer_full_language(cfg.source_language, prev_ctx.language, "") or lang_full
+                    if prev_ctx is not None else None
+                )
+                next_lang = (
+                    _infer_full_language(cfg.source_language, next_ctx.language, "") or lang_full
+                    if next_ctx is not None else None
+                )
                 mms_words = mms.align_with_context(
                     (cropped, sample_rate),
                     prev_ctx.text if prev_ctx is not None else "",
@@ -246,6 +256,8 @@ def align_sentence(
                     next_ctx.text if next_ctx is not None else "",
                     language=lang_full,
                     offset_sec=actual_start,
+                    prev_language=prev_lang,
+                    next_language=next_lang,
                 )
             else:
                 mms_words = mms.align(

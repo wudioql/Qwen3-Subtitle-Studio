@@ -1,35 +1,51 @@
-"""core.align_engine.full — 全文重对齐（单段 / 静音切块）。"""
+"""core.align_engine.full — 全文重对齐（策略层：派发 / 单段 / 切块 / 两阶段）。
+
+本模块只做**策略选择与编排**；语言决议、字级切回与事务提交等原语在 ``words``，
+切块机制在 ``chunking``（本模块单向依赖二者）。
+
+分段按 **Qwen 分词器族**收敛（``core.language_utils.tokenizer_family``）：同族语言
+（中/粤/英/法/德… 共用官方默认「CJK 逐字 + 空格词」分词路径）合并成一次调用，
+只有 ja / ko 与其它语言同段混排时才真正需要分开调用。
+
+**音频窗来源只有两种**：① 静音点 / 长度切块；② 两阶段里阶段一产出的**真实时间**。
+句级时间**只**用于把文本分组到块或对齐调用，**绝不**用于定义音频裁剪窗——首次
+全文重对齐时句级时间多为 ASR / 纯文本导入的**占位值**（字符占比均分），按它裁
+音频会让段内内容完全对不上（已知缺陷）。
+
+MMS-FA 后端语言**不进模型**（只影响罗马化读音），因此完全不做语言裁剪：整段
+一次调用，逐句语言经 ``word_languages`` 传入。
+"""
 from __future__ import annotations
 
-import copy
 import logging
-from typing import List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
-from subs.models import Sentence, SubtitleProject, WordTimestamp
+from subs.models import Sentence, SubtitleProject
 
 from core import audio_io
-from core.constants import (
-    ALIGNER_MAX_DURATION,
-    ALIGN_CHUNK_MAX_DURATION,
-    ALIGN_CHUNK_MIN_DURATION,
-    ALIGN_CHUNK_OVERLAP,
-    DEFAULT_SAMPLE_RATE,
-)
+from core.constants import ALIGNER_MAX_DURATION, DEFAULT_SAMPLE_RATE
+from core.language_utils import default_family_representative, tokenizer_family
 from core.model_manager import ModelManager
 from core.task_control import raise_if_cancelled
-from core.text_utils import attach_words_to_sentences as _attach_words_to_sentences
 
-from .common import (
-    _crop_audio,
-    _infer_full_language,
-    apply_seam_snaps,
-    commit_aligned_words,
-    preflight_segmenter_deps,
-)
+from .chunking import _commit_collected, _media_span, _plan_jobs, _run_jobs
+from .common import _crop_audio, preflight_segmenter_deps
 from .config import AlignConfig, _report
-import core.align_engine as _ae  # 符号经包查找，兼容 patch("core.align_engine.*")
+from .words import (
+    _assign_words,
+    _build_word_languages,
+    _commit_one,
+    _commit_span,
+    _conflict_segments,
+    _dominant_family,
+    _finish_full_text,
+    _language_setter,
+    _qwen_words,
+    _resolve_language_segments,
+)
 
 logger = logging.getLogger("core.align_engine")
+
 
 def get_mms_aligner(*args, **kwargs):
     """运行时经包入口查找，保证 patch(\"core.align_engine.get_mms_aligner\") 生效。"""
@@ -63,35 +79,9 @@ def align_full_text(
     return _align_full_text_chunked(project, model_manager=model_manager, cfg=cfg)
 
 
-def _resolve_language_segments(
-    project: SubtitleProject,
-    cfg: AlignConfig,
-) -> List[Tuple[str, List[Sentence]]]:
-    """把有文本的句子按「决议语言」切成连续同语言段。
-
-    决议顺序：cfg.source_language(≠auto) > 句级语言 > 项目语言。
-    单语项目 → 恰好 1 段（行为与分段前等价）；混语项目 → 每段一次对齐调用，
-    各自携带自己的语言提示——Qwen 后端 API 一次调用仅支持单语言；MMS 后端
-    则用于 K1 日语读音路由与 word.language 标注。
-    空文本句不参与对齐（无段可归）；任一句语言无法决议 → ValueError。
-    """
-    segments: List[Tuple[str, List[Sentence]]] = []
-    for i, s in enumerate(project.sentences):
-        if not (s.text or "").strip():
-            continue
-        lang = _infer_full_language(cfg.source_language, s.language, project.source_language)
-        if not lang:
-            raise ValueError(
-                f"无法推断第 {i+1} 句的语言（sentence.language={s.language!r}, "
-                f"project.source_language={project.source_language!r}, "
-                f"cfg.source_language={cfg.source_language!r}）。请显式设置句级或项目语言。"
-            )
-        if segments and segments[-1][0] == lang:
-            segments[-1][1].append(s)
-        else:
-            segments.append((lang, [s]))
-    return segments
-
+# ══════════════════════════════════════════════════════════════════
+# 单段全文重对齐（media ≤ ALIGNER_MAX_DURATION）
+# ══════════════════════════════════════════════════════════════════
 
 def _align_full_text_single(
     project: SubtitleProject,
@@ -99,7 +89,14 @@ def _align_full_text_single(
     model_manager: ModelManager,
     cfg: AlignConfig,
 ) -> SubtitleProject:
-    """全文重对齐（单块级，media ≤ 300s；按语言分段）。
+    """全文重对齐（单块级，media ≤ 300s）。
+
+    - **MMS 后端**：语言不进模型 → 整段一次调用、零裁剪，逐句语言经
+      ``word_languages`` 传给罗马化。
+    - **Qwen 单族**（含中/粤/英混排）：一次调用、零裁剪（占位时间只被产出覆盖，
+      不会被拿去裁音频）。
+    - **Qwen 多族冲突**（ja/ko 与其它语言同段混排）：两阶段——阶段一用整段音频
+      + 全文拿**真实时间**，阶段二在真实时间窗上按族精修。
 
     每个语言段先在独立句子副本上切回字级，验证非空后再提交到项目；空产出
     或异常不会清掉旧 words，也不会错误清除 dirty。
@@ -136,96 +133,79 @@ def _align_full_text_single(
 
     audio_np, sr = audio_io.load_audio(
         project.audio_path, mono=True, target_sr=DEFAULT_SAMPLE_RATE)
-    n_seg = len(segments)
-    _report(cfg, 0, n_seg + 1, "全文重对齐：拼接文本 + 加载对齐器...")
 
-    committed_sids: set[int] = set()
-    with align_ctx as mms_or_ref:
-        for seg_i, (seg_lang, seg_sents) in enumerate(segments):
-            raise_if_cancelled(cfg.cancel_cb)
-            _report(
-                cfg, seg_i + 1, n_seg + 1,
-                f"全文重对齐：语言段 {seg_i+1}/{n_seg}（{seg_lang} · {len(seg_sents)} 句）",
+    all_sents = [s for _, sents in segments for s in sents]
+    families = {tokenizer_family(lang) for lang, _ in segments}
+    language_of = _language_setter(cfg, project, segments[0][0])
+
+    if cfg.align_backend == "mms":
+        total_steps = 2
+        with align_ctx:
+            committed_sids = _align_mms_single(
+                project, cfg, mms, audio_np, sr, all_sents, segments,
+                language_of=language_of, total_steps=total_steps,
             )
-            full_text = " ".join(s.text.strip() for s in seg_sents)
+        log_label = "full-text single(mms)"
+    elif len(families) == 1:
+        total_steps = 2
+        _report(cfg, 0, total_steps, f"全文重对齐：整段单次（{segments[0][0]} · {len(all_sents)} 句）...")
+        committed_sids = set()
+        with align_ctx:
+            full_text = " ".join(s.text.strip() for s in all_sents)
+            raw_words = _qwen_words(audio_np, sr, full_text, segments[0][0], 0.0, model_manager)
+            committed_sids = _commit_span(
+                all_sents, raw_words, language_of=language_of, context="单族整段",
+            )
+        log_label = f"full-text single(单族 {segments[0][0]})"
+    else:
+        total_steps = 1 + sum(
+            1 for lang, _ in segments if tokenizer_family(lang) != _dominant_family(segments)
+        ) + 1
+        with align_ctx:
+            committed_sids = _align_two_stage(
+                project, cfg, segments, audio_np, sr,
+                model_manager=model_manager, language_of=language_of,
+                total_steps=total_steps, chunked=False,
+                mms=None, silence_points=None, media_dur=media_dur,
+            )
+        log_label = "full-text single(多族两阶段)"
 
-            if n_seg == 1:
-                seg_audio, seg_offset = audio_np, 0.0
-            else:
-                seg_start = min(s.start_time for s in seg_sents)
-                seg_end = max(s.end_time for s in seg_sents)
-                seg_audio, actual_start, _ = _crop_audio(
-                    audio_np, sr, seg_start, seg_end,
-                    pad_before=cfg.pad_before, pad_after=cfg.pad_after,
-                )
-                if seg_audio.size == 0:
-                    logger.warning("[Align] 语言段 %d 裁剪后为空，保留原状", seg_i)
-                    continue
-                seg_offset = actual_start
-
-            if cfg.align_backend == "mms":
-                raw_words = mms_or_ref.align(
-                    (seg_audio, sr), full_text,
-                    language=seg_lang, offset_sec=seg_offset,
-                )
-            else:
-                items = _ae.align_sentence_raw(
-                    (seg_audio, sr), full_text, seg_lang,
-                    model_manager=model_manager,
-                )
-                raw_words = [
-                    WordTimestamp(
-                        text=it["text"],
-                        start_time=round(it["start_time"] + seg_offset, 3),
-                        end_time=round(it["end_time"] + seg_offset, 3),
-                        language=seg_lang,
-                    )
-                    for it in items
-                ] if items else []
-
-            if not raw_words:
-                logger.warning(
-                    "[Align] 语言段 %d(%s) 对齐产出为空，保留原字级与脏标记",
-                    seg_i, seg_lang,
-                )
-                continue
-
-            candidates = [copy.deepcopy(s) for s in seg_sents]
-            for candidate in candidates:
-                candidate.words = []
-            assigned = _attach_words_to_sentences(candidates, raw_words)
-            for original, candidate in zip(seg_sents, assigned):
-                if original.is_locked:
-                    continue
-                if not commit_aligned_words(candidate, list(candidate.words)):
-                    logger.warning(
-                        "[Align] 语言段 %d 的句 sid=%d 未得到字级，保留原状",
-                        seg_i, original.sid,
-                    )
-                    continue
-                original.words = copy.deepcopy(candidate.words)
-                original.start_time = candidate.start_time
-                original.end_time = candidate.end_time
-                original.timed = candidate.timed
-                original.is_dirty = False
-                committed_sids.add(original.sid)
-
-    # 空文本没有可对齐内容，清脏即可；锁定句和失败句保持原状。
-    for sentence in project.sentences:
-        if not sentence.is_locked and not (sentence.text or "").strip():
-            sentence.is_dirty = False
-
-    if not committed_sids:
-        logger.warning("[Align] full-text 对齐没有提交任何新字级，项目保持原状")
-
-    project.sort()
-    apply_seam_snaps(project, sentence_sids=committed_sids)
-    _report(cfg, n_seg + 1, n_seg + 1, "完成")
-    logger.info(
-        "[Align] full-text single 完成：%d 句 / %d 语言段 / %d 句成功提交",
-        len(project.sentences), n_seg, len(committed_sids),
+    return _finish_full_text(
+        project, cfg, committed_sids, total_steps=total_steps, log_label=log_label,
     )
-    return project
+
+
+def _align_mms_single(
+    project: SubtitleProject,
+    cfg: AlignConfig,
+    mms,
+    audio_np, sr,
+    all_sents: List[Sentence],
+    segments: List[Tuple[str, List[Sentence]]],
+    *,
+    language_of: Callable[[Sentence], str],
+    total_steps: int,
+) -> set[int]:
+    """MMS 后端整段单次调用（零裁剪、逐句读音语言）。"""
+    if len(segments) > 1:
+        logger.info(
+            "[Align] MMS 后端忽略语言分段：%d 段合并为整段单次调用（语言不进模型）",
+            len(segments),
+        )
+    _report(cfg, 0, total_steps, f"全文重对齐：MMS 整段强制对齐（{len(all_sents)} 句）...")
+    full_text = " ".join(s.text.strip() for s in all_sents)
+    raw_words = mms.align(
+        (audio_np, sr), full_text,
+        language=segments[0][0],
+        word_languages=_build_word_languages(all_sents, project, cfg),
+        offset_sec=0.0,
+    )
+    return _commit_span(all_sents, raw_words, language_of=language_of, context="MMS 整段")
+
+
+# ══════════════════════════════════════════════════════════════════
+# 长媒体全文重对齐（media > ALIGNER_MAX_DURATION）：静音切块
+# ══════════════════════════════════════════════════════════════════
 
 def _align_full_text_chunked(
     project: SubtitleProject,
@@ -233,10 +213,12 @@ def _align_full_text_chunked(
     model_manager: ModelManager,
     cfg: AlignConfig,
 ) -> SubtitleProject:
-    """全文重对齐（media > 300s）：按语言分段、段内静音切块、事务式提交。
+    """全文重对齐（media > 300s）：静音切块、事务式提交。
 
-    每个重叠块在独立句子副本上工作；候选按“原句中心距块中心”选择，避免
-    多个块共享同一 ``Sentence`` 导致先前候选被后续块原地覆盖。
+    与单段路径同构：MMS / 单族 = 一个 group 覆盖整段媒体；多族冲突 = 两阶段
+    （阶段一真实时间 → 阶段二按族精修）。每个重叠块在独立句子副本上工作；
+    候选按「原句中心距块中心」选择，避免多个块共享同一 ``Sentence`` 导致先前
+    候选被后续块原地覆盖。
     """
     segments = _resolve_language_segments(project, cfg)
     if not segments:
@@ -258,6 +240,7 @@ def _align_full_text_chunked(
 
     audio_np, sr = audio_io.load_audio(
         project.audio_path, mono=True, target_sr=DEFAULT_SAMPLE_RATE)
+    media_dur = float(project.media_duration or 0.0)
     silence_points = audio_io.detect_silence_points(
         audio_np, sr, threshold_db=-30.0, min_silence_sec=0.5,
     )
@@ -267,124 +250,177 @@ def _align_full_text_chunked(
         for sentence in project.sentences
     }
 
-    jobs: List[Tuple[str, float, float, List[Sentence]]] = []
-    for seg_lang, seg_sents in segments:
-        seg_start = min(s.start_time for s in seg_sents)
-        seg_end = max(s.end_time for s in seg_sents)
-        span = seg_end - seg_start
-        shifted = [sp - seg_start for sp in silence_points if seg_start < sp < seg_end]
-        plan = audio_io.build_split_plan(
-            span, shifted,
-            max_duration=ALIGN_CHUNK_MAX_DURATION,
-            min_duration=ALIGN_CHUNK_MIN_DURATION,
-            overlap_sec=ALIGN_CHUNK_OVERLAP,
-        )
-        for cs, ce in plan.chunk_ranges:
-            c0, c1 = seg_start + cs, seg_start + ce
-            chunk_sents = [
-                sentence for sentence in seg_sents
-                if sentence.start_time < c1 and sentence.end_time > c0
-            ]
-            if chunk_sents:
-                jobs.append((seg_lang, c0, c1, chunk_sents))
-
-    n_jobs = len(jobs)
-    logger.info(
-        "[Align] 切块计划：%d 语言段 / %d 块，overlap=%.1fs",
-        len(segments), n_jobs, ALIGN_CHUNK_OVERLAP,
-    )
-    _report(cfg, 0, n_jobs + 1, f"全文重对齐：{len(segments)} 语言段 / {n_jobs} 块…")
-    if not jobs:
-        logger.warning("[Align] 长媒体没有生成可执行块，项目保持原状")
-        _report(cfg, 1, 1, "完成（无可执行块）")
-        return project
-
-    # sid -> (候选句快照, 原句中心到块中心的距离)
-    collected: dict[int, tuple[Sentence, float]] = {}
+    all_sents = [s for _, sents in segments for s in sents]
+    families = {tokenizer_family(lang) for lang, _ in segments}
+    language_of = _language_setter(cfg, project, segments[0][0])
+    media_span = _media_span(media_dur, all_sents)
+    log_label = "full-text chunked"
 
     with align_ctx:
-        for job_i, (job_lang, chunk_start, chunk_end, chunk_sentences) in enumerate(jobs):
-            raise_if_cancelled(cfg.cancel_cb)
-            _report(
-                cfg, job_i + 1, n_jobs + 1,
-                f"全文重对齐：块 {job_i+1}/{n_jobs}（{job_lang} · {chunk_start:.0f}-{chunk_end:.0f}s）",
+        if cfg.align_backend == "mms" or len(families) == 1:
+            if cfg.align_backend == "mms" and len(segments) > 1:
+                logger.info(
+                    "[Align] MMS 后端忽略语言分段：%d 段合并为单组整段切块",
+                    len(segments),
+                )
+            jobs = _plan_jobs(
+                segments[0][0], all_sents, media_span, silence_points,
             )
-            block_center = (chunk_start + chunk_end) / 2.0
+            total_steps = len(jobs) + 1
+            _report(cfg, 0, total_steps, f"全文重对齐：{len(jobs)} 块…")
+            if not jobs:
+                logger.warning("[Align] 长媒体没有生成可执行块，项目保持原状")
+                _report(cfg, 1, 1, "完成（无可执行块）")
+                return project
+            collected = _run_jobs(
+                jobs, project=project, cfg=cfg, audio_np=audio_np, sr=sr,
+                model_manager=model_manager, mms=mms, original_centers=original_centers,
+            )
+            committed_sids = _commit_collected(project, collected, language_of=language_of)
+            log_label = f"full-text chunked(单族 {segments[0][0]}, {len(jobs)} 块)"
+        else:
+            committed_sids = _align_two_stage(
+                project, cfg, segments, audio_np, sr,
+                model_manager=model_manager, language_of=language_of,
+                total_steps=0, chunked=True,
+                mms=None, silence_points=silence_points, media_dur=media_dur,
+                original_centers=original_centers,
+            )
+            log_label = "full-text chunked(多族两阶段)"
 
+    return _finish_full_text(
+        project, cfg, committed_sids, total_steps=1, log_label=log_label,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════
+# 多族冲突的两阶段（单段 / 切块共用）
+# ══════════════════════════════════════════════════════════════════
+
+def _align_two_stage(
+    project: SubtitleProject,
+    cfg: AlignConfig,
+    segments: List[Tuple[str, List[Sentence]]],
+    audio_np, sr,
+    *,
+    model_manager: ModelManager,
+    language_of: Callable[[Sentence], str],
+    total_steps: int,
+    chunked: bool,
+    mms,
+    silence_points: Optional[List[float]],
+    media_dur: float,
+    original_centers: Optional[Dict[int, float]] = None,
+) -> set[int]:
+    """多族冲突（ja/ko 与其它语言同段混排）下的两阶段全文重对齐。
+
+    阶段一：整段音频 + 全文一次对齐（语言取 default 族代表）→ 得**真实时间**。
+    阶段二：对每个非主导族段，用**阶段一真实时间**裁窗 + 各自语言精修。
+
+    绝不使用句级占位时间裁音频。阶段二若拿不到真实时间锚 → 跳过并告警
+    （保留原状），不用占位时间兜底。
+    """
+    dominant_family = _dominant_family(segments)
+    default_langs = [lang for lang, _ in segments if tokenizer_family(lang) == "default"]
+    phase1_lang = default_langs[0] if default_langs else default_family_representative()
+    conflicts = _conflict_segments(segments, dominant_family)
+
+    all_sents = [s for _, sents in segments for s in sents]
+    n_steps = total_steps or (1 + len(conflicts) + 1)
+    _report(
+        cfg, 0, n_steps,
+        f"全文重对齐：多语言分族（{len(segments)} 段），阶段一粗对齐…",
+    )
+
+    def _family_of(sentence: Sentence) -> str:
+        return tokenizer_family(language_of(sentence))
+
+    # ── 阶段一 ────────────────────────────────────────────────
+    real_span: Dict[int, Tuple[float, float]] = {}
+    committed: set[int] = set()
+
+    if chunked:
+        assert silence_points is not None
+        jobs1 = _plan_jobs(
+            phase1_lang, all_sents, _media_span(media_dur, all_sents), silence_points,
+        )
+        collected1 = _run_jobs(
+            jobs1, project=project, cfg=cfg, audio_np=audio_np, sr=sr,
+            model_manager=model_manager, mms=mms,
+            original_centers=original_centers or {},
+        )
+        committed |= _commit_collected(
+            project, collected1, language_of=language_of,
+            accept=lambda s: _family_of(s) == dominant_family,
+        )
+        by_sid = {s.sid: s for s in project.sentences}
+        for sid, (candidate, _d) in collected1.items():
+            sentence = by_sid.get(sid)
+            if sentence is not None and _family_of(sentence) != dominant_family:
+                real_span[sid] = (float(candidate.start_time), float(candidate.end_time))
+    else:
+        full_text = " ".join(s.text.strip() for s in all_sents)
+        raw1 = _qwen_words(audio_np, sr, full_text, phase1_lang, 0.0, model_manager)
+        for original, candidate in _assign_words(all_sents, raw1):
+            if not candidate.words:
+                continue
+            if _family_of(original) == dominant_family:
+                if _commit_one(
+                    original, candidate, language_of=language_of, context="阶段一主导族",
+                ):
+                    committed.add(original.sid)
+            else:
+                real_span[original.sid] = (
+                    float(candidate.start_time), float(candidate.end_time),
+                )
+
+    _report(
+        cfg, 1, n_steps,
+        f"全文重对齐：阶段一完成（{phase1_lang} 全文），精修 {len(conflicts)} 个语言族段…",
+    )
+
+    # ── 阶段二 ────────────────────────────────────────────────
+    for step, (seg_lang, seg_sents) in enumerate(conflicts, start=1):
+        raise_if_cancelled(cfg.cancel_cb)
+        spans = [real_span[s.sid] for s in seg_sents if s.sid in real_span]
+        if not spans:
+            logger.warning(
+                "[Align] 语言族段 %s 在阶段一未取得真实时间，跳过精修（保留原状）", seg_lang,
+            )
+            _report(cfg, step + 1, n_steps, f"全文重对齐：{seg_lang} 段无真实时间锚，跳过")
+            continue
+
+        win = (min(a for a, _ in spans), max(b for _, b in spans))
+        _report(
+            cfg, step + 1, n_steps,
+            f"全文重对齐：精修 {seg_lang} 段（{len(seg_sents)} 句 · {win[0]:.1f}-{win[1]:.1f}s）…",
+        )
+        target_sids = {s.sid for s in seg_sents}
+
+        if chunked:
+            assert silence_points is not None
+            jobs2 = _plan_jobs(seg_lang, seg_sents, win, silence_points)
+            collected2 = _run_jobs(
+                jobs2, project=project, cfg=cfg, audio_np=audio_np, sr=sr,
+                model_manager=model_manager, mms=mms,
+                original_centers=original_centers or {},
+            )
+            committed |= _commit_collected(
+                project, collected2, language_of=language_of,
+                accept=lambda s: s.sid in target_sids,
+            )
+        else:
             cropped, actual_start, _ = _crop_audio(
-                audio_np, sr, chunk_start, chunk_end,
+                audio_np, sr, win[0], win[1],
                 pad_before=cfg.pad_before, pad_after=cfg.pad_after,
             )
             if cropped.size == 0:
-                logger.warning("[Align] 块 %d 裁剪后为空，保留原状", job_i)
+                logger.warning("[Align] 语言族段 %s 真实窗裁后为空，跳过", seg_lang)
                 continue
+            seg_text = " ".join(s.text.strip() for s in seg_sents)
+            raw2 = _qwen_words(cropped, sr, seg_text, seg_lang, actual_start, model_manager)
+            committed |= _commit_span(
+                seg_sents, raw2, language_of=language_of, context=f"阶段二 {seg_lang}",
+            )
 
-            full_text = " ".join(sentence.text.strip() for sentence in chunk_sentences)
-            if cfg.align_backend == "mms":
-                raw_words = mms.align(
-                    (cropped, sr), full_text,
-                    language=job_lang, offset_sec=actual_start,
-                )
-            else:
-                items = _ae.align_sentence_raw(
-                    (cropped, sr), full_text, job_lang,
-                    model_manager=model_manager,
-                )
-                raw_words = [
-                    WordTimestamp(
-                        text=it["text"],
-                        start_time=round(it["start_time"] + actual_start, 3),
-                        end_time=round(it["end_time"] + actual_start, 3),
-                        language=job_lang,
-                    )
-                    for it in items
-                ] if items else []
-
-            if not raw_words:
-                logger.warning("[Align] 块 %d 对齐产出为空，保留原状", job_i)
-                continue
-
-            candidates = [copy.deepcopy(sentence) for sentence in chunk_sentences]
-            for candidate in candidates:
-                candidate.words = []
-            assigned = _attach_words_to_sentences(candidates, raw_words)
-
-            for original, candidate in zip(chunk_sentences, assigned):
-                if original.is_locked:
-                    continue
-                if not commit_aligned_words(candidate, list(candidate.words)):
-                    logger.warning(
-                        "[Align] 块 %d 的句 sid=%d 未得到字级，忽略该候选",
-                        job_i, original.sid,
-                    )
-                    continue
-                distance = abs(original_centers[original.sid] - block_center)
-                existing = collected.get(original.sid)
-                if existing is None or distance < existing[1]:
-                    collected[original.sid] = (copy.deepcopy(candidate), distance)
-
-    committed_sids: set[int] = set()
-    for original in project.sentences:
-        if original.is_locked:
-            continue
-        entry = collected.get(original.sid)
-        if entry is None:
-            if not (original.text or "").strip():
-                original.is_dirty = False
-            continue
-        candidate, _distance = entry
-        original.words = copy.deepcopy(candidate.words)
-        original.start_time = candidate.start_time
-        original.end_time = candidate.end_time
-        original.timed = candidate.timed
-        original.is_dirty = False
-        committed_sids.add(original.sid)
-
-    project.sort()
-    apply_seam_snaps(project, sentence_sids=committed_sids)
-    _report(cfg, n_jobs + 1, n_jobs + 1, "完成")
-    logger.info(
-        "[Align] full-text chunked 完成：%d 句 / %d 语言段 %d 块 / %d 句成功提交",
-        len(project.sentences), len(segments), n_jobs, len(committed_sids),
-    )
-    return project
+    return committed

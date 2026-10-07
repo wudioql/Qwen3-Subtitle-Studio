@@ -557,11 +557,55 @@ def test_patch_never_relabels_cantonese_as_chinese():
 
 
 def test_patch_ignores_non_chinese_segments():
-    """整段非中/粤时不启用补丁——已是英文/日语的整段无需再切。"""
+    """整段是英文/俄文时不启用补丁——已是原文，无需再切。
+
+    2026-10-07：整段**日/韩**已改为启用（见 ``_JA_KO_TO_EN``），故本用例只覆盖
+    英文与俄文。日/韩的行为由 ``test_patch_splits_english_out_of_ja_ko_segment``
+    单独守护。
+    """
     assert (split_zh_en_sentence_language(
         "Politics and the English language.", "English", _QWEN3) is None)
+    # 俄语整段：西里尔是独占脚本，但不扩俄语 → 沿用整段语种
     assert (split_zh_en_sentence_language(
-        _JA_TEXT, "Japanese", _SENSEVOICE) is None)
+        "Это русский текст.", "Russian", _QWEN3) is None)
+
+
+def test_patch_splits_english_out_of_ja_ko_segment():
+    """整段日/韩 → 纯英文句切成 English（用户 2026-10-07 拍板的新增方向）。
+
+    与中/档那条的关键差异：**日语句子天然含汉字**。``日本語勉強中`` 实测是
+    ``han=6 / kana=0``，因此这条分支**不能**沿用中/粤的「含汉字 → 沿用整段」
+    判据，否则日整段里的英文句会被漏判。
+    """
+    for proj in ("Japanese", "Korean"):
+        # 纯英文句（无任何本地脚本）→ 切出
+        assert (split_zh_en_sentence_language(
+            "Politics and the English language from Wikipedia.", proj, _SENSEVOICE
+        ) == "English"), proj
+        # 带 Kanji 的**日语句**必须沿用整段语种，不能被拉丁字母带跑
+        # （回归护栏：这条正是「不挡汉字」的风险点）
+        assert (split_zh_en_sentence_language(
+            "日本語勉強中", "Japanese", _SENSEVOICE) is None)
+        # 韩语句同理（谚文独占）
+        assert (split_zh_en_sentence_language(
+            "꽃이 피었습니다", "Korean", _SENSEVOICE) is None)
+
+
+def test_patch_ja_ko_branch_never_touches_cantonese_behavior():
+    """日/韩分支的加入**不得**改变中/粤的既有行为（逐字不变）。
+
+    这是本次改动的核心回归面：中/粤分支的判据一个字都没动，
+    粤语保护尤其不能因为新分支而松动。
+    """
+    # 粤语口语字含汉字 → 沿用 Cantonese，绝不被判English
+    assert (split_zh_en_sentence_language(
+        "我嘅日本語好正。", "Cantonese", _SENSEVOICE) is None)
+    # 中英混排（含汉字）→ 沿用 Chinese
+    assert (split_zh_en_sentence_language(
+        "今天的会议 discuss 了 API 设计", "Chinese", _QWEN3) is None)
+    # 粤语整段里的纯英文句仍要能切出来
+    assert (split_zh_en_sentence_language(
+        "This is an English sentence.", "Cantonese", _SENSEVOICE) == "English")
 
 
 def test_patch_refuses_fragments_and_other_scripts():

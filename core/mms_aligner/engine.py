@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Callable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import librosa
@@ -274,6 +274,7 @@ class MMSAligner:
         language: str = "auto",
         offset_sec: float = 0.0,
         tail_limit_sec: Optional[float] = None,
+        word_languages: Optional[Sequence[str]] = None,
     ) -> List[WordTimestamp]:
         """对一段音频与文本执行标准 MMS-FA 强制对齐，返回 WordTimestamp 列表。
 
@@ -282,6 +283,13 @@ class MMSAligner:
         使末字上界不依赖裁剪窗长度——窗口再宽也不会「给多少吃多少」，
         重复重对齐结果收敛。None = 维持旧行为（音频末端为界，
         供整段全文对齐使用：彼时每个字的上界天然是下一字起点）。
+
+        word_languages：**逐词语言**（可选）。MMS 模型本身不吃语言，语言只影响
+        罗马化——数字拼读表 ``_DIGIT_SPELLINGS`` 与日语汉字的 pykakasi 读音路由
+        （``_romanize_word``）。多语言文本合并成一次调用时，用本参数按词指定语言
+        即可保持各句读音正确，无需按语言切音频。长度契约：应等于
+        ``len(extract_pure_words(text))``；不足处逐词回落 ``language``；
+        逐词语言为空串时同样回落。返回的 ``WordTimestamp.language`` 同步为该词语言。
         """
         # 1. 音频准备 (16kHz 单声道 float32)
         if isinstance(audio, (str, Path)):
@@ -312,9 +320,16 @@ class MMSAligner:
 
         all_targets: List[int] = []
         word_token_ranges: List[Tuple[int, int]] = []
+        word_langs: List[str] = []
 
-        for w in words_raw:
-            w_rom = self._romanize_word(w, language)
+        for i_w, w in enumerate(words_raw):
+            # 逐词语言（多语言一次调用时保持各句读音正确）；缺省回落统一 language
+            w_lang = language
+            if word_languages is not None and i_w < len(word_languages):
+                w_lang = word_languages[i_w] or language
+            word_langs.append(w_lang)
+
+            w_rom = self._romanize_word(w, w_lang)
             w_tokens: List[int] = []
             for c in w_rom:
                 if c in vocab:
@@ -428,7 +443,7 @@ class MMSAligner:
                 text=words_raw[i],
                 start_time=s_time,
                 end_time=e_time,
-                language=language,
+                language=word_langs[i],
             ))
 
         return out_words
@@ -442,6 +457,8 @@ class MMSAligner:
         *,
         language: str = "auto",
         offset_sec: float = 0.0,
+        prev_language: Optional[str] = None,
+        next_language: Optional[str] = None,
     ) -> List[WordTimestamp]:
         """上下文强制对齐：把 [prev_text, text, next_text] 拼成一段对齐，只返回 text 的词。
 
@@ -455,11 +472,24 @@ class MMSAligner:
 
         分词数切片：``align`` 内部按 ``extract_pure_words`` 切词，拼接用空格分隔，
         故整段词数 = prev 词数 + 本句词数 + next 词数，切片稳定。
+
+        prev_language / next_language：邻句语言（可选）。仅用于让邻句 token 的
+        罗马化读音（数字拼读 / 日语 pykakasi）用对语言——中英混排里英文邻句的
+        数字不该按中文读法展开。缺省回落 ``language``，切片约定不受影响。
         """
         prev_n = len(extract_pure_words(prev_text or ""))
         cur_n = len(extract_pure_words(text or ""))
+        next_n = len(extract_pure_words(next_text or ""))
         full = " ".join(p for p in (prev_text, text, next_text) if (p or "").strip())
-        all_words = self.align(audio, full, language=language, offset_sec=offset_sec)
+        word_langs = (
+            [prev_language or language] * prev_n
+            + [language] * cur_n
+            + [next_language or language] * next_n
+        )
+        all_words = self.align(
+            audio, full, language=language, offset_sec=offset_sec,
+            word_languages=word_langs,
+        )
         lo = min(prev_n, len(all_words))
         hi = min(prev_n + cur_n, len(all_words))
         return all_words[lo:hi]

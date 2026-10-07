@@ -33,9 +33,14 @@ workers/      QThread 异步任务
 ui/           主窗口、编辑器、播放器、控制器
 tests/        逻辑/UI 合同测试
 e2e/          目标机真实模型验收脚本
-tools/        环境探针
+tools/        环境探针与判据自检脚本
 assets/       应用图标
 ```
+
+`tools/` 下有两种东西，别混：`env_check_native_api.py`（环境探针，发布前门禁）与
+`cloud_models_cli.py`（模型清单 CLI，真源在 `core/cloud_models.py`）是**长期驻留**工具；
+`check_ja_ko_en_split.py` 是**某条判据的回归判据**，改相关逻辑后可重跑确认未退化。
+一次性诊断用的临时探针**不要留在仓库**——结论固化进 `tests/` 护栏或提交说明后即删。
 
 `tests/_env.py` 是测试环境三件套的唯一实现；`tests/conftest.py` 和 `tests/_bootstrap.py` 只负责在 pytest/直跑场景调用它。测试会隔离 `QSS_CONFIG_DIR`、`QSS_TEMP_DIR`，并默认设置 Qt offscreen 与 `QSS_DISABLE_MPV=1`。
 
@@ -128,6 +133,15 @@ python main.py
 - FFmpeg CLI；
 - libmpv/libass；
 - PotPlayer/Aegisub/mpv.net 外部验收。
+
+**runner 标签钉在 `ubuntu-24.04`，不用 `ubuntu-latest`**（2026-10-06 决定）。官方公告
+`actions/runner-images#14748`：`ubuntu-latest` 自 2026-10-19 起逐步迁到 Ubuntu 26.04、
+11-19 完成，届时会**静默换掉整条 CI 的平台**。本项目的 Qt 离屏渲染与 CPU Torch 轮子
+对 glibc/kernel 敏感，而「本地 Windows 全绿、只有 Linux 炸」已经真实发生过一次
+（2026-10-06 三条 CI 失败）。故平台迁移必须**显式、可追溯**。
+
+真要迁移时，先用独立的 `ubuntu-26.04` job 试跑，通过了再改这一行；Ubuntu 24.04 的
+标准支持到 2029 年，短期内不会被强制迁移。
 
 因此 CI 绿只代表自动化层通过。用户已确认本机完整 E2E、libmpv、Aegisub、mpv.net 和 PotPlayer 兼容性测试正常；这些结果不由当前 CI 复现。若未来进入正式分发，再按 [DEPLOYMENT.md](DEPLOYMENT.md) 补充相应发布验收，并在变更说明中区分 `implemented-pending`、`verified-current` 和 `unplanned`。
 
