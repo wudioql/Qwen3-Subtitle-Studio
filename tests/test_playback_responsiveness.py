@@ -253,11 +253,13 @@ def test_mpv_backend_renders_audio_subtitles_and_falls_back_without_waiting(tmp_
 
         def __init__(self):
             self.loaded = []
+            self.load_positions = []
             self.pause_calls = 0
             self.shutdown_calls = 0
 
-        def load(self, path):
+        def load(self, path, *, position: float = 0.0):
             self.loaded.append(Path(path))
+            self.load_positions.append(float(position))
             return True
 
         def pause(self):
@@ -300,6 +302,71 @@ def test_mpv_backend_renders_audio_subtitles_and_falls_back_without_waiting(tmp_
     panel.shutdown_mpv()
     assert fake.shutdown_calls == 1
     panel.close()
+
+
+def test_player_load_carries_position_and_resume(tmp_path):
+    """换播放音轨时 ``load(position=…, resume=…)`` 必须真的传下去。
+
+    位置要**进到 mpv 的同一个 load 动作**里（loadfile 后再 seek），不能靠外部
+    QTimer 补 —— 两个独立提交时 seek 可能落在旧文件上，等于没跳。
+    """
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    QApplication.instance() or QApplication(["test"])
+    from ui.player import PlayerPanel
+
+    class FakeMpv:
+        failed = False
+
+        def __init__(self):
+            self.loaded = []
+            self.positions = []
+            self.play_calls = 0
+
+        def load(self, path, *, position: float = 0.0):
+            self.loaded.append(Path(path))
+            self.positions.append(position)
+            return True
+
+        def play(self):
+            self.play_calls += 1
+            return True
+
+        def pause(self):
+            return True
+
+        def position(self):
+            return 0.0
+
+    clip = tmp_path / "voice.wav"
+    clip.write_bytes(b"audio")
+    panel = PlayerPanel()
+    fake = FakeMpv()
+    panel._mpv = fake
+    panel._mpv_ready = True
+    panel._mpv_host = QWidget(panel)
+    try:
+        # 缺省 = 打开新媒体语义：从头、不自动播
+        panel.load(clip)
+        assert fake.positions == [0.0]
+        assert panel.is_playing() is False
+
+        # 换轨语义：沿用位置 + 继续播
+        panel.load(clip, position=42.0, resume=True)
+        assert fake.positions == [0.0, 42.0]
+        assert fake.play_calls == 1
+        assert panel.is_playing() is True
+
+        # Qt 分支同样要把位置传进 setPosition（不靠事后补 seek）
+        panel._mpv_ready = False
+        with patch.object(panel, "_load_qt_media") as load_qt:
+            panel.load(clip, position=7.5, resume=False)
+        assert load_qt.call_args.kwargs == {"position": 7.5, "resume": False}
+    finally:
+        panel.close()
 
 
 def test_mpv_subtitle_generation():
@@ -498,6 +565,70 @@ def test_editor_set_playhead_skips_hidden_word_view():
         editor.set_playhead(0.5)
     wp.assert_not_called()
     editor.close()
+
+
+def test_audio_source_switch_reloads_only_playback_media(tmp_path):
+    """「播放音轨」下拉：可用性跟工程状态走，切换**只**换播放媒体。
+
+    三个要点（用户实测需求）：① 默认播原音频；② 切到人声轨时播放器换成
+    ``project.audio_path``，但 ``project.audio_path`` 本身不变（波形/ASR/对齐的
+    数据源不许被播放偏好影响）；③ 视频媒体永远禁用——画面只存在于原文件。
+    另外钉住「切换后位置与播放态沿用」，否则每次切轨都弹回开头。
+    """
+    from unittest.mock import patch
+    from pathlib import Path
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication(["test"])
+    from core.constants import PLAYBACK_SOURCE_ORIGINAL, PLAYBACK_SOURCE_VOCALS
+    from ui.main_window import MainWindow
+
+    win = MainWindow()
+    try:
+        combo = win.player._audio_src_combo
+        # 启动即禁用（还没有工程），默认项是原音频
+        assert combo.currentData() == PLAYBACK_SOURCE_ORIGINAL
+        assert combo.isEnabled() is False
+
+        audio = tmp_path / "song.flac"
+        audio.write_bytes(b"fLaC")
+        # 人声轨必须落在**真实的缓存命名合同**路径上：判定走
+        # is_vocals_track_of(vocals_cache_path(源)) 精确相等，随手起个
+        # 「vocals_xxx.wav」不会被认（那正是防「提取件冒名人声轨」的护栏）。
+        from core.vocal_separator import vocals_cache_path
+        vocals = vocals_cache_path(audio)
+        vocals.parent.mkdir(parents=True, exist_ok=True)
+        vocals.write_bytes(b"RIFF")
+
+        # 纯音频 + 已有人声轨 → 可选
+        proj = SubtitleProject(source_media_path=str(audio), audio_path=str(vocals))
+        win._project = proj
+        win.project_ctrl._sync_playback_source_control(proj)
+        assert combo.isEnabled() is True
+
+        # 切到人声轨：播放器加载 audio_path，工程数据源不变，位置/播放态沿用
+        win.player._media_path = audio
+        win.player._user_wants_play = True
+        with patch.object(win.player, "position", return_value=12.5), \
+             patch.object(win.player, "load") as load, \
+             patch.object(win.player, "is_playing", return_value=True):
+            idx = combo.findData(PLAYBACK_SOURCE_VOCALS)
+            combo.setCurrentIndex(idx)
+            QApplication.instance().processEvents()
+            load.assert_called_once()
+            got, kwargs = load.call_args.args[0], load.call_args.kwargs
+        assert Path(got) == vocals, "切到人声轨后播放媒体必须是 audio_path"
+        assert kwargs["position"] == 12.5 and kwargs["resume"] is True, \
+            "切轨不该把用户弹回开头，也不该擅自开始/停止播放"
+        assert proj.audio_path == str(vocals), "数据源不得被播放偏好改写"
+        assert win.project_ctrl._playback_audio_source() == PLAYBACK_SOURCE_VOCALS
+
+        # 纯音频但没有（有效）人声轨 → 禁用并指向「人声提取」
+        noproj = SubtitleProject(source_media_path=str(audio), audio_path=str(audio))
+        win.project_ctrl._sync_playback_source_control(noproj)
+        assert combo.isEnabled() is False
+        assert "人声提取" in combo.toolTip()
+    finally:
+        win.close()
 
 
 if __name__ == "__main__":

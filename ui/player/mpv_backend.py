@@ -281,15 +281,24 @@ class MpvBackend:
         self._safe_emit(self._bridge.playing_changed, not bool(value))
 
     # ── 非阻塞播放控制 ─────────────────────────────────────────────
-    def load(self, media_path: str | Path) -> bool:
+    def load(self, media_path: str | Path, *, position: float = 0.0) -> bool:
+        """载入媒体；``position`` > 0 时在同一 worker 动作里 seek 到该位置。
+
+        必须**在同一个 action 内**先 ``loadfile`` 再 seek：python-mpv 的
+        ``loadfile`` 会阻塞到文件真正开始播放，所以紧随其后的 seek 落在新文件上；
+        若拆成两个提交，seek 可能先于换文件执行（落在旧文件上，等于没跳）。
+        用途：切换「原音频 ↔ 人声轨」时保住用户正在听的位置。
+        """
         path = str(Path(media_path).resolve())
 
         def action(player) -> None:
             player.pause = True
             self._remove_subtitle_track(player)
             player.loadfile(path)
+            if position > 0:
+                player.command("seek", float(position), "absolute")
             with self._state_lock:
-                self._position_cache = 0.0
+                self._position_cache = float(max(0.0, position))
                 self._duration_cache = 0.0
 
         return self._worker.submit("load", action, timeout=10.0, coalesce_key="load")

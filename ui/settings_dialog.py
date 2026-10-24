@@ -451,8 +451,23 @@ class SettingsDialog(QDialog):
         f.addRow("最大生成 token 数", self._max_new_tokens)
 
         self._extract_vocals_cb = CheckBox(w)
-        self._extract_vocals_cb.setText("默认启用人声提取 (Kim_Vocal_2 自动剥离伴奏)")
-        self._extract_vocals_cb.setChecked(getattr(asr, "extract_vocals", False))
+        self._extract_vocals_cb.setText("导入媒体时自动提取人声（Kim_Vocal_2 剥离伴奏）")
+        self._extract_vocals_cb.setChecked(getattr(asr, "extract_vocals", True))
+        # 文案刻意写清「代价」与「什么时候该关」：默认开启后这是唯一告知成本的地方
+        # （导入流程不再弹确认框，只靠状态栏进度）。数字来自 RTX 4070 三点实测
+        # （30s→9.3s / 120s→12.7s / 193s→15.4s），线性拟合 ≈ 8 秒固定开销 + 3.7% 时长，
+        # 与素材语言、视频/音频容器无关。
+        self._extract_vocals_cb.setToolTip(
+            "开启：打开/重新关联媒体时先分离出人声轨，识别与字级对齐都吃人声轨。\n"
+            "歌曲、演唱会、带伴奏的翻唱强烈建议开启——实测 MMS-FA 的尾音边界在混音上\n"
+            "会被伴奏拖长或提前截断（人声轨上则自然收敛）。\n"
+            "播放不受影响：默认仍播你导入的原文件（含伴奏/带画面），想试听分离效果\n"
+            "可在播放器底部控制条右侧切到「人声轨」。\n"
+            "代价：首次约 8 秒模型加载 + 约占素材时长 4% 的推理（RTX 4070 实测 193 秒\n"
+            "素材 15.4 秒）；显卡不可用而回退 CPU 时会慢数倍，长素材请留意状态栏进度\n"
+            "并随时取消。结果按内容指纹缓存，同一媒体再次导入直接命中、不再重算。\n"
+            "纯人声素材（播客/访谈）收益小，可关闭以省时间。"
+        )
         f.addRow("", self._extract_vocals_cb)
 
         self._return_words = CheckBox(w)
@@ -464,7 +479,7 @@ class SettingsDialog(QDialog):
         self._use_cache.setText("启用 KV cache（通常保持开启）")
         self._use_cache.setChecked(asr.use_cache)
         f.addRow("", self._use_cache)
-        f.addRow(hint_label("归属指引：识别语言 / 对齐后端 / 人声提取在主工具栏即时切换（本页仅默认项）；逐字高亮样式与 k-tag 在右侧导出侧栏；ASS 文字样式在其专属弹窗——各处修改都会持久化到同一份 preferences.json。"))
+        f.addRow(hint_label("归属指引：识别语言 / 识别后端 / 对齐模式在主工具栏即时切换（本页仅默认项）；播放原音频还是人声轨在播放器底部控制条右侧切换；逐字高亮样式与 k-tag 在右侧导出侧栏；ASS 文字样式在其专属弹窗——各处修改都会持久化到同一份 preferences.json。"))
         self._add_page("asr", "识别与对齐", w)
 
     def _build_cloud_asr_tab(self) -> None:

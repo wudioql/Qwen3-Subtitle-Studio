@@ -132,12 +132,17 @@ def test_segments_karaoke_progress():
 
 @pytest.mark.logic
 def test_playback_media_choice(tmp_path=None):
-    """视频始终播原文件（保画面）；纯音频仅人声分离后播人声轨。
+    """播放媒体：默认恒播原文件；只有「音频 + 偏好人声轨 + 确有人声件」才换轨。
 
-    用户实测回归：视频导入后曾被提取的 .wav 顶掉播放媒体 → 画面永远丢失、
-    面板恒显「音频媒体·无画面」。"""
+    两段历史一起钉在这里：
+    1. 视频导入后曾被提取的 .wav 顶掉 → 画面永远丢失（早期回归）；
+    2. 纯音频曾**无条件**播人声轨（原意「试听分离效果」）→ 人声提取改成默认开启后，
+       导入 mp3 会默认只听到人声、用户以为文件坏了。现在默认播原文件，
+       想看分离效果得显式切到人声轨（``PLAYBACK_SOURCE_VOCALS``）。
+    数据源（波形/ASR/对齐）不受本函数影响，恒为 ``project.audio_path``。"""
     import tempfile
     from pathlib import Path as _P
+    from core.constants import PLAYBACK_SOURCE_ORIGINAL, PLAYBACK_SOURCE_VOCALS
     from ui.project_controller import choose_playback_media
 
     with tempfile.TemporaryDirectory() as td:
@@ -146,17 +151,32 @@ def test_playback_media_choice(tmp_path=None):
         video = _P(td) / "movie.mp4"
         audio = _P(td) / "song.flac"
 
-        # 视频：无论有无提取件/人声件，都播原文件
+        # 默认（audio_source 缺省=original）：无论有无提取件/人声件，都播原文件
         assert choose_playback_media(video, wav, False) == video
         assert choose_playback_media(video, wav, True) == video
         assert choose_playback_media(video, None, False) == video
-        # 纯音频：仅人声分离后播人声轨；普通提取件不顶替
-        assert choose_playback_media(audio, wav, True) == wav
+        assert choose_playback_media(audio, wav, True) == audio
         assert choose_playback_media(audio, wav, False) == audio
         assert choose_playback_media(audio, None, False) == audio
+
+        # 显式选人声轨：纯音频才换（视频必须保画面），且只在确实提取过时换
+        assert choose_playback_media(
+            audio, wav, True, audio_source=PLAYBACK_SOURCE_VOCALS) == wav
+        assert choose_playback_media(
+            audio, wav, False, audio_source=PLAYBACK_SOURCE_VOCALS) == audio
+        assert choose_playback_media(
+            video, wav, True, audio_source=PLAYBACK_SOURCE_VOCALS) == video
+        # 未知取值按原音频处理（偏好文件被手改坏不该把播放顶掉）
+        assert choose_playback_media(
+            audio, wav, True, audio_source="bogus") == audio
+
         # 人声件标记了但文件已被清理 → 回退原文件
         missing = _P(td) / "gone.wav"
         assert choose_playback_media(audio, missing, True) == audio
+        assert choose_playback_media(
+            audio, missing, True, audio_source=PLAYBACK_SOURCE_VOCALS) == audio
+        # 显式常量与字面量一致（防两处各写一份后漂移）
+        assert PLAYBACK_SOURCE_ORIGINAL == "original" and PLAYBACK_SOURCE_VOCALS == "vocals"
 
 
 # ═════════════ ui ═════════════

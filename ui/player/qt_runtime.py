@@ -230,6 +230,93 @@ class QtPlaybackRuntimeMixin:
         self._mode_combo.blockSignals(False)
         self._stage.set_mode(mode if mode in PREVIEW_MODES else "sentence")
 
+    # ── 播放音轨（原音频 / 提取后的人声轨）──────────────────────────
+    def is_playing(self) -> bool:
+        """用户是否处于「想要播放」的状态（暂停/停止后为 False）。
+
+        换播放音轨时要沿用这个状态：正在听就换完继续听，暂停就别自己动起来。
+        """
+        return bool(getattr(self, "_user_wants_play", False))
+
+    def _build_audio_source_combo(self):
+        """构建「播放音轨」下拉（**只决定听到什么**，不影响波形/识别）。
+
+        播放媒体与数据源解耦是刻意的：波形 / ASR / 强制对齐恒吃 ``audio_path``
+        （人声提取开启时 = 人声轨），本下拉只切换播放器加载哪个文件。默认播原音频，
+        所以导入 mp3 不会「只听到人声、以为文件坏了」；要看分离效果或怀疑某句被
+        伴奏骗了，再切到人声轨。
+        """
+        from qfluentwidgets import ComboBox
+
+        from core.app_config import load_preferences
+        from core.constants import PLAYBACK_SOURCE_ORIGINAL, PLAYBACK_SOURCE_VOCALS
+
+        combo = ComboBox(self)
+        combo.addItem("🎧 原音频", userData=PLAYBACK_SOURCE_ORIGINAL)
+        combo.addItem("🎤 人声轨", userData=PLAYBACK_SOURCE_VOCALS)
+        try:
+            saved = str(load_preferences().playback.audio_source or PLAYBACK_SOURCE_ORIGINAL)
+        except Exception:  # noqa: BLE001
+            saved = PLAYBACK_SOURCE_ORIGINAL
+        idx = combo.findData(saved)
+        combo.blockSignals(True)
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+        combo.blockSignals(False)
+        combo.currentIndexChanged.connect(self._on_audio_source_changed)
+        combo.setEnabled(False)   # 没有工程/人声轨前不可点，由 set_audio_source_state 打开
+        combo.setToolTip("播放音轨：人声轨只在提取过之后可选（工具栏「人声提取」）。\n"
+                         "波形、识别与字级对齐始终使用人声轨，与这里无关。")
+        return combo
+
+    def _on_audio_source_changed(self, _idx: int) -> None:
+        source = self._audio_src_combo.currentData()
+        if source:
+            self.audio_source_changed.emit(str(source))
+
+    def audio_source(self) -> str:
+        """当前播放音轨偏好（``original`` / ``vocals``）。"""
+        from core.constants import PLAYBACK_SOURCE_ORIGINAL
+        if getattr(self, "_audio_src_combo", None) is None:
+            return PLAYBACK_SOURCE_ORIGINAL
+        return str(self._audio_src_combo.currentData() or PLAYBACK_SOURCE_ORIGINAL)
+
+    def set_audio_source_state(self, source: str, *, has_vocals: bool, is_video: bool) -> None:
+        """同步下拉的当前值与可用性（由 ProjectController 在工程媒体变化后调用）。
+
+        禁用场景（都是「这个开关此刻没有意义」而不是出错）：
+        - 还没有人声轨 → 提示去哪里提取；
+        - 视频 → 提示画面只存在于原文件。
+          此时下拉**显示「原音频」而不是偏好值**：禁用状态下控件应当描述现实
+          （此刻确实在播原文件），否则用户会看到「人声轨」却听着原音频。
+          偏好本身不动，换回纯音频媒体时仍按偏好来。
+        """
+        from core.constants import PLAYBACK_SOURCE_ORIGINAL
+
+        combo = getattr(self, "_audio_src_combo", None)
+        if combo is None:
+            return
+        blocked = is_video
+        shown = PLAYBACK_SOURCE_ORIGINAL if blocked else source
+        i = combo.findData(shown)
+        combo.blockSignals(True)
+        combo.setCurrentIndex(i if i >= 0 else 0)
+        combo.blockSignals(False)
+        if blocked:
+            combo.setEnabled(False)
+            combo.setToolTip("视频始终播放原文件：画面只存在于原文件，换成人声轨就没有画面了。\n"
+                             "波形、识别与字级对齐仍使用人声轨；偏好保留，换到纯音频媒体时再生效。")
+        elif not has_vocals:
+            combo.setEnabled(False)
+            combo.setToolTip(
+                "当前媒体还没有人声轨。点工具栏「人声提取」后即可切到人声轨试听。"
+            )
+        else:
+            combo.setEnabled(True)
+            combo.setToolTip(
+                "播放音轨：原音频 = 你导入的文件（含伴奏）；人声轨 = 提取后的纯人声。\n"
+                "波形、识别与字级对齐始终使用人声轨，与这里无关。"
+            )
+
     def _on_state(self, state) -> None:
         if self._active_backend != "qt" or not _HAS_QT_MULTIMEDIA or self._player is None:
             return

@@ -54,6 +54,9 @@ class PlayerPanel(PlayerFocusSurfaceMixin, SubtitlePreviewMixin, QtPlaybackRunti
     state_paused = Signal()
     state_stopped = Signal()
     focus_mode_requested = Signal()
+    # 播放音轨切换（"original" / "vocals"）：面板只发意图，换媒体与持久化由
+    # ProjectController 做——面板不碰工程状态，也不需要知道人声轨在哪。
+    audio_source_changed = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -329,7 +332,10 @@ class PlayerPanel(PlayerFocusSurfaceMixin, SubtitlePreviewMixin, QtPlaybackRunti
             self._activate_backend("qt")
         self._update_backend_label()
 
-    def load(self, media_path: str | Path) -> None:
+    def load(self, media_path: str | Path, *, position: float = 0.0,
+             resume: bool = False) -> None:
+        """载入媒体。``position``/``resume`` 供「换播放音轨」沿用同一位置与播放态；
+        缺省 ``0.0/False`` = 打开新媒体的语义（从头、不自动播）。"""
         self._media_path = Path(media_path)
         self._update_focus_click_hint()
         if not self._media_path.is_file():
@@ -338,7 +344,7 @@ class PlayerPanel(PlayerFocusSurfaceMixin, SubtitlePreviewMixin, QtPlaybackRunti
         self._preview_primed = False
         if self._active_backend == "mpv" and self._mpv_ready and self._mpv is not None:
             self._mpv.pause()  # 非阻塞；切媒体先阻止旧视频继续出声
-        self._user_wants_play = False
+        self._user_wants_play = bool(resume)
         self._cancel_prime_timer()
         self._end_priming()
         self._is_video = self._media_path.suffix.lower() in VIDEO_SUFFIXES
@@ -346,13 +352,16 @@ class PlayerPanel(PlayerFocusSurfaceMixin, SubtitlePreviewMixin, QtPlaybackRunti
 
         if self._mpv_ready and self._mpv is not None:
             self._activate_backend("mpv")
-            if self._mpv.load(self._media_path):
+            if self._mpv.load(self._media_path, position=position):
                 self._rebuild_mpv_subtitle()
+                if resume:
+                    self._mpv.play()
+                    self.state_playing.emit()
                 return
             self._on_mpv_failed("mpv load 命令未能入队")
 
         # mpv 未就绪时 Qt 先立即可用；视频/音频都继续等待后台 mpv 预热。
-        self._load_qt_media()
+        self._load_qt_media(position=position, resume=resume)
         self._ensure_mpv_started()
 
     def set_project(self, project) -> None:

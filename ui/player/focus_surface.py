@@ -59,6 +59,13 @@ class PlayerFocusSurfaceMixin:
             button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
             bar.addWidget(button)
         bar.addStretch(1)
+        # 播放音轨（原音频 / 人声轨）贴在控制条最右：它是**播放**属性，与三个播放键
+        # 同一行最直觉。放在最后一个 stretch 之后（而不是之前）有两个原因：
+        # 1. 前面 0~4 号项（stretch·play·pause·stop·stretch）的布局契约不动；
+        # 2. 三个播放键仍在两条 stretch 之间——只是右侧多了控件，视觉上整体略偏左，
+        #    这是预期，不是回归。
+        self._audio_src_combo = self._build_audio_source_combo()
+        bar.addWidget(self._audio_src_combo)
         return bar
 
     def _install_focus_click_target(self, widget: QWidget) -> None:

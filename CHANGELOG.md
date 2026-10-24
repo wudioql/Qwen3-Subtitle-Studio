@@ -19,6 +19,11 @@
 
 ### Changed
 
+- **播放媒体与数据源彻底解耦：默认播放原文件，人声轨改为可切换选项**。新增 `prefs.playback.audio_source`（`core.constants.PLAYBACK_SOURCE_ORIGINAL` / `..._VOCALS`，默认 `"original"`）与播放器控制条右侧的「播放音轨」下拉。规则：视频**始终播原文件**（画面只存在于原文件，故该下拉对视频禁用并说明原因）；纯音频默认也播原文件，只有用户显式切到「人声轨」且确实提取过时才播 `audio_path`。波形 / ASR / 强制对齐**恒**吃 `audio_path`，与本偏好无关——切换不触发重新识别、不改写工程字段。切换时沿用当前位置与播放态（`PlayerPanel.load(position=…, resume=…)`；mpv 侧在同一 worker 动作里 `loadfile` 后 seek，避免 seek 落到旧文件上）。起因：人声提取改为默认开启后，纯音频会默认只听到人声、用户以为文件坏了。
+  回归：`tests/test_subtitle_overlay.py::test_playback_media_choice`（默认恒原文件 / 显式人声轨仅纯音频生效 / 视频不换文件 / 未知取值回落 / 人声件被清理回退）、`tests/test_playback_responsiveness.py::test_audio_source_switch_reloads_only_playback_media`（可用性随工程状态、切轨只换播放媒体且保留位置）、`::test_player_load_carries_position_and_resume`、`tests/test_app_config.py::test_playback_audio_source_defaults_to_original`。
+- **人声提取改为默认开启，并去掉每次导入的模态确认**（`ASRPreferences.extract_vocals` 默认 `True`）。依据是上一条实测结论：伴奏一旦进了声学证据，MMS-FA 的尾音边界就会判错（拖长 / 提前截断各占一半），而生产把 `audio_path`（开启提取时=人声轨）直接喂对齐器——默认关等于让普通用户默认拿到被污染的边界。原设计是「偏好开启后每次导入/重新关联弹窗问一次」，这会把「默认开启」退回「每次都要点一下」；现在**偏好本身即知情同意**，分离仍在后台 Worker 跑、逐块上报进度（「正在分离伴奏与人声 (i/n 帧块)」）并可取消，不想用就在「设置 → 识别与对齐」关掉；旧配置里**显式写了 `false` 的保持关闭**（不做批量迁移，尊重用户选择），只有缺这个键的旧配置按新默认开启。代价实测（RTX 4070，30s→9.3s / 120s→12.7s / 193s→15.4s，三点线性拟合）约 **8 秒固定开销 + 3.7% 素材时长**；ORT 回退 CPU 会慢数倍，故进度文案与可取消必须保留。结果按内容指纹缓存、跨会话复用（实测同一素材二次导入 0.00 秒）。
+  同时修掉两处文案：设置页勾选框改写为写明适用场景与代价（歌曲/翻唱建议开，纯人声播客可关；长素材要留意状态栏进度、随时可取消），并把归属指引里「人声提取在主工具栏即时切换」这句**假描述**改回真实存在的「识别语言 / 识别后端 / 对齐模式」——工具栏从来没有人声提取开关，只有一个一次性的「人声提取」动作按钮。
+  回归：`tests/test_app_config.py::test_extract_vocals_defaults_on`（类默认值 / 旧配置缺键补齐 / 显式 `false` 必须尊重）、`tests/test_toolbar.py` 决策层三分支（开启且模型可用 / 模型不可用静默跳过 / 偏好关闭），以及重新关联编排层「决策结果原样透传」的双向断言（打桩决策层，不再依赖机器上有没有模型文件）。
 - **全文重对齐分段由「按语言」改为「按 Qwen 分词器族」**（`core/language_utils.tokenizer_family`）。实测官方 `split_words_for_alignment` 只对 `Japanese`/`Korean` 分支切到 nagisa / soynlp，其余语言（含 `None`/中/粤/英/法…）共用同一条默认「CJK 逐字 + 空格词」路径且**输出逐字等价**——中英混排原本被拆成两段纯属多余，现在合并为**一次调用、零裁剪**。ja/ko 单独出现（含夹英文）传对应语言即可；只有 ja/ko 与 zh/yue/en 同段混排才是真·分词器冲突。
 - **MMS 后端不再按语言分段**：语言不进 ONNX 模型，只影响罗马化读音（数字拼读 / 日语 pykakasi）。改为整段一次调用，逐句读音语言经 `MMSAligner.align(..., word_languages=...)` 传入；`align_with_context` 新增 `prev_language`/`next_language`，让邻句 token 的读音用对语言。
 - 逐句 `word.language` 标注改由各句语言分别回填（族收敛后一个 default 段可含多语言）。

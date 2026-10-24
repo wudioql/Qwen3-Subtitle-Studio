@@ -23,6 +23,7 @@ from .cloud_asr import DEFAULT_CLOUD_MODEL
 from .constants import (
     ALIGNER_MODEL_PATH,
     ASR_MODEL_PATH,
+    PLAYBACK_SOURCE_ORIGINAL,
     PROJECT_ROOT,
 )
 from subs.ass_style import AssStylePrefs
@@ -55,7 +56,14 @@ class ASRPreferences:
     """TranscribeConfig 的持久化镜像（不含 progress_cb 动态字段）。"""
     source_language: str = "auto"
     return_word_timestamps: bool = True
-    extract_vocals: bool = False         # 前置轻量级人声分离 (Kim_Vocal_2)
+    # 前置人声分离 (Kim_Vocal_2)：**默认开启**。实测（2026-10-24，test-long-sing
+    # 193s + MMS-FA）尾音边界只在「输入无伴奏」时可靠——混音里的伴奏能量会让
+    # 「发音是否继续」判错（拖长/提前截断各一半），人声轨上 A 自己就停对了。
+    # 代价实测（RTX 4070，三点线性拟合）：≈8 秒固定开销（模型加载 + 44.1k 解码）
+    # + 约 3.7% 素材时长（30s→9.3s / 120s→12.7s / 193s→15.4s）；ORT 回退 CPU 会慢数倍。
+    # 结果按内容指纹缓存并可跨会话复用。纯人声素材（播客/访谈）收益小，可在设置里关闭。
+    # 真源论述见 AGENTS.md §3。
+    extract_vocals: bool = True
     context: str = ""
     max_new_tokens: int = 512
     use_cache: bool = True
@@ -226,6 +234,24 @@ class SegmentationPrefs:
 
 
 @dataclass
+class PlaybackPreferences:
+    """播放器媒体源偏好（**只影响听到什么**，不影响识别/对齐吃什么）。
+
+    ``audio_source``：
+        ``"original"``（默认）— 播放器始终播原媒体。视频保画面，音频保伴奏，
+            用户听到的就是他导入的那个文件；人声轨只作波形/ASR/对齐的数据源。
+        ``"vocals"``           — **纯音频**媒体改播提取出的人声轨（试听分离效果、
+            排查「这句是不是被伴奏骗了」）。视频仍播原文件：画面只存在于原文件，
+            单文件单轨的播放器换轨就等于丢画面。
+
+    真源常量在 ``core.constants.PLAYBACK_SOURCE_*``（UI 与决策层共用，避免各写一份
+    字面量）。旧 preferences.json 缺这一节时按类默认值补齐 → 老用户默认「播原音频」。
+    """
+
+    audio_source: str = PLAYBACK_SOURCE_ORIGINAL
+
+
+@dataclass
 class Preferences:
     """根偏好设置对象。"""
     # version 仅为普通格式标记（历史编号，恒为 1）：不做版本校验、不实现迁移——
@@ -246,6 +272,7 @@ class Preferences:
     # 落入字段，无需迁移。）
     ui_theme: str = "dark"                    # "light" | "dark"（与 ui.themes._DEFAULT_THEME 一致）
     player_preview_mode: str = "sentence"     # 预览字幕模式 key（见 ui.player.subtitle_overlay.PREVIEW_MODES）
+    playback: PlaybackPreferences = field(default_factory=PlaybackPreferences)  # 播放媒体源（原音频/人声轨）
     extra: Dict[str, Any] = field(default_factory=dict)  # 用户自定义扩展，不做 schema 校验
 
 

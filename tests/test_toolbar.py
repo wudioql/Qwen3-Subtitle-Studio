@@ -165,11 +165,21 @@ def test_unsaved_gate_and_media_relink_preserve_subtitles(tmp_path):
     before = project.to_dict()["sentences"]
     # 重新关联现在是异步编排：同步守卫照旧，重活移出主线程。
     # 1) 编排层：守卫通过后以正确参数启动媒体准备 Worker。
-    with patch.object(win.project_ctrl, "_start_media_prep") as start_prep:
+    #    这里**打桩决策层**而不是依赖真实偏好：``extract_vocals`` 默认开启后，
+    #    「do_vocals 恒为 False」不再是事实（重新关联与普通打开共用同一份偏好，
+    #    见 AGENTS.md §3），真正要钉的是「编排层原样透传决策结果」。
+    with patch.object(win.project_ctrl, "_start_media_prep") as start_prep, \
+         patch.object(win.project_ctrl, "_should_extract_vocals", return_value=False):
         assert win.project_ctrl.relink_media_file(media)
     start_prep.assert_called_once()
     assert start_prep.call_args.kwargs["do_vocals"] is False
     assert start_prep.call_args.kwargs["done_label"] == "媒体已重新关联，字幕数据保持不变"
+
+    # 决策为「要分离」时同一条路径必须透传 True（不得在编排层写死 False）
+    with patch.object(win.project_ctrl, "_start_media_prep") as start_prep, \
+         patch.object(win.project_ctrl, "_should_extract_vocals", return_value=True):
+        assert win.project_ctrl.relink_media_file(media)
+    assert start_prep.call_args.kwargs["do_vocals"] is True
 
     # 2) 提交层：Worker 回传结果后的同步提交逻辑（字幕保留、路径更新、标脏）。
     info = AudioInfo(media, 16000, 1, 5.0, 80000)
@@ -413,7 +423,9 @@ def test_project_json_drag_and_relink_vocal_path(tmp_path):
     opened.assert_called_once_with(project_file)
     assert drop_event.accepted
 
-    # 默认启用 + 模型可用 + 用户确认时，决策层必须判定「执行人声分离」。
+    # 默认开启 + 模型可用 → 决策层判定「执行人声分离」。
+    # 刻意**不打桩任何确认框**：偏好即用户意愿，导入时不得再弹模态追问
+    # （否则「默认开启」等于每次都要点一下）。
     media = tmp_path / "replacement.mp4"
     media.touch()
     vocal = tmp_path / "replacement.vocals.wav"
@@ -423,8 +435,23 @@ def test_project_json_drag_and_relink_vocal_path(tmp_path):
     prefs = SimpleNamespace(asr=SimpleNamespace(extract_vocals=True))
     with patch("core.app_config.load_preferences", return_value=prefs), \
          patch("core.vocal_separator.get_vocal_separator", return_value=separator), \
-         patch.object(win.project_ctrl, "_ask_vocal_extraction", return_value=True):
+         patch("ui.project_controller.QMessageBox") as box_cls:
         assert win.project_ctrl._should_extract_vocals(media) is True
+    # 决策过程不得构造任何对话框：偏好即同意，弹一次就退回「每次导入都要点」
+    box_cls.assert_not_called()
+
+    # 模型不可用 → 静默跳过（用原音频），不得抛异常、不得弹窗阻拦打开媒体
+    separator.is_available.return_value = False
+    with patch("core.app_config.load_preferences", return_value=prefs), \
+         patch("core.vocal_separator.get_vocal_separator", return_value=separator):
+        assert win.project_ctrl._should_extract_vocals(media) is False
+
+    # 偏好关闭 → 即使模型可用也不做
+    separator.is_available.return_value = True
+    off = SimpleNamespace(asr=SimpleNamespace(extract_vocals=False))
+    with patch("core.app_config.load_preferences", return_value=off), \
+         patch("core.vocal_separator.get_vocal_separator", return_value=separator):
+        assert win.project_ctrl._should_extract_vocals(media) is False
 
     project = SubtitleProject(sentences=[Sentence("保留", 0.0, 1.0)])
     win._apply_project(project)

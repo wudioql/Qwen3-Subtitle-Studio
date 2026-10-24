@@ -94,6 +94,19 @@ MMS_HEAD_EXTEND: float = 0.5
 # 不受影响。与 merge_punct「句内相邻字消除间隙」同语义，作用于句间。
 ALIGN_SEAM_SNAP_MAX: float = 0.025
 
+# ── 播放器媒体源（prefs.playback.audio_source）────────────────────────────
+# **播放**与**数据源**是两条独立链路，别混：
+#   数据源（波形 / ASR / 强制对齐）= ``project.audio_path``，人声提取开启时恒为人声轨，
+#     不受本偏好影响——这是实测结论（伴奏会拖坏 MMS-FA 尾音边界）要求的。
+#   播放媒体 = ``ui.project_controller.choose_playback_media`` 按本偏好选择：
+#     "original"（默认）→ 始终播原媒体：视频保画面，音频保伴奏（用户听感==原文件）；
+#     "vocals"           → **纯音频**媒体改播人声轨（试听分离效果）；视频仍播原文件，
+#                          因为画面只存在于原文件里（QMediaPlayer/mpv 单文件单轨）。
+# 判据只看「视频/音频」，不看 ``audio_path != source_media_path``（提取件同样满足该不等式）。
+PLAYBACK_SOURCE_ORIGINAL: str = "original"
+PLAYBACK_SOURCE_VOCALS: str = "vocals"
+PLAYBACK_SOURCES: tuple[str, ...] = (PLAYBACK_SOURCE_ORIGINAL, PLAYBACK_SOURCE_VOCALS)
+
 # 注：ASR 侧不做超长自动切块（已明确否决该需求）；>ASR_MAX_DURATION 由 transcribe() 守卫报错
 
 # ── 推理默认参数 ───────────────────────────────────────────────────────

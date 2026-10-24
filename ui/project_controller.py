@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from core import audio_io
+from core.constants import PLAYBACK_SOURCE_ORIGINAL, PLAYBACK_SOURCE_VOCALS, PLAYBACK_SOURCES
 from subs.models import PROJECT_SCHEMA_VERSION, SubtitleProject
 
 if TYPE_CHECKING:
@@ -70,21 +71,37 @@ def probe_duration(media_path: str) -> float:
         return 0.0
 
 
-def choose_playback_media(source: Path, wav_path, vocal_extracted: bool) -> Path:
+def choose_playback_media(
+    source: Path,
+    wav_path,
+    vocal_extracted: bool,
+    *,
+    audio_source: str = PLAYBACK_SOURCE_ORIGINAL,
+) -> Path:
     """决定喂给播放器的媒体（纯函数，供测试直调）。
 
-    规则：
-    - 视频媒体 → **始终播放原文件**（QMediaPlayer 自解码画面+声音）。提取的
-      16k wav / 人声分离 wav 只作 ASR/对齐数据源（audio_path），不顶替播放
-      媒体——否则视频永远被 .wav 顶掉，画面丢失（用户实测：任何视频都显示
-      「音频媒体·无画面」）；
-    - 纯音频媒体 → 做过人声分离时播放人声轨（试听分离效果，沿袭原行为），
-      否则播放原文件（soundfile 不能直读的音频格式 QMediaPlayer 也能播）。
+    **播放媒体与数据源是两条链路**：波形 / ASR / 强制对齐恒吃 ``project.audio_path``
+    （人声提取开启时 = 人声轨），本函数只管「耳朵听到什么」。
+
+    规则（``audio_source`` 来自 ``prefs.playback.audio_source``，见
+    ``core.constants.PLAYBACK_SOURCE_*``）：
+
+    - 视频媒体 → **始终返回原文件**：QMediaPlayer 是单文件单轨，换成人声 wav 等于
+      丢掉画面（用户实测过：任何视频都显示「音频媒体·无画面」），故视频上不做
+      试听切换，播放音轨下拉对视频禁用并说明原因。
+    - 纯音频媒体 → ``"vocals"`` 且确有人声轨时播人声轨（试听分离效果）；
+      否则播原文件（``soundfile`` 不能直读的音频格式 QMediaPlayer 也能播）。
+    - 人声件标记为真但文件已被清理（``.temp`` 被清）→ 回退原文件。
     """
     from subs.media_types import VIDEO_SUFFIXES
     if source.suffix.lower() in VIDEO_SUFFIXES:
         return source
-    if vocal_extracted and wav_path and Path(wav_path).exists():
+    if (
+        audio_source == PLAYBACK_SOURCE_VOCALS
+        and vocal_extracted
+        and wav_path
+        and Path(wav_path).exists()
+    ):
         return Path(wav_path)
     return source
 
@@ -95,38 +112,118 @@ class ProjectController:
     def __init__(self, win: MainWindow) -> None:
         self._win = win
 
-    def _ask_vocal_extraction(self, media_name: str) -> bool:
-        """使用中文按钮询问是否执行默认启用的人声提取。"""
-        box = QMessageBox(self._win)
-        box.setIcon(QMessageBox.Icon.Question)
-        box.setWindowTitle("人声提取确认")
-        box.setText(
-            "检测到已开启默认人声提取偏好。\n\n"
-            f"是否对媒体「{media_name}」提取纯人声音轨？"
-        )
-        extract_button = box.addButton("提取人声", QMessageBox.ButtonRole.AcceptRole)
-        _original_button = box.addButton("使用原音频", QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(extract_button)
-        box.exec()
-        return box.clickedButton() is extract_button
-
     def _should_extract_vocals(self, path: Path) -> bool:
         """「是否执行人声分离」决策（UI 线程，在启动媒体准备 Worker 前完成）。
 
-        条件：偏好 extract_vocals 开启 + 人声模型可用 + 用户确认；任一步不满足即跳过。
+        条件：偏好 ``extract_vocals`` 开启 + 人声模型可用；任一步不满足即跳过。
+
+        **刻意不弹模态确认**（原 ``_ask_vocal_extraction`` 已删）：偏好本身就是
+        用户意愿，每次导入再追问一次会把「默认开启」变回「每次都要点一下」——
+        正是实测结论（伴奏拖坏尾音边界）想消掉的那一步摩擦。替代反馈：
+        分离在后台 Worker 里跑并逐块上报进度（「正在分离伴奏与人声 (i/n 帧块)」），
+        状态栏可见、随时可取消；不想要就在「设置 → 识别与对齐」取消勾选。
+        模型不可用时只记一条 INFO 日志，不打扰用户（多数机器没放模型）。
         """
         try:
             from core.app_config import load_preferences
             from core.vocal_separator import get_vocal_separator
 
             prefs = load_preferences()
-            enabled = bool(getattr(prefs.asr, "extract_vocals", False))
-            if not enabled or not get_vocal_separator().is_available():
+            if not bool(getattr(prefs.asr, "extract_vocals", True)):
                 return False
-            return self._ask_vocal_extraction(path.name)
+            if not get_vocal_separator().is_available():
+                logger.info(
+                    "[ProjectController] 已开启人声提取但模型不可用，本次使用原音频：%s",
+                    path.name,
+                )
+                return False
+            return True
         except Exception:  # noqa: BLE001
             logger.debug("[ProjectController] 人声提取偏好检查失败，跳过", exc_info=True)
             return False
+
+    # ── 播放音轨：原音频 / 提取后的人声轨 ────────────────────────────
+    @staticmethod
+    def _playback_audio_source() -> str:
+        """读 ``prefs.playback.audio_source``；非法值一律回落「原音频」。"""
+        try:
+            from core.app_config import load_preferences
+            src = str(getattr(load_preferences().playback, "audio_source", "") or "")
+        except Exception:  # noqa: BLE001
+            return PLAYBACK_SOURCE_ORIGINAL
+        return src if src in PLAYBACK_SOURCES else PLAYBACK_SOURCE_ORIGINAL
+
+    def set_playback_audio_source(self, source: str) -> None:
+        """切换「播放原音频 / 播放提取后的人声轨」：持久化 + 就地换播放媒体。
+
+        **只换播放器媒体**：``project.audio_path``（波形 / ASR / 强制对齐的数据源）
+        一个字都不动——这两条链路本就解耦，切换播放音轨不得影响识别结果。
+        位置与播放态尽量保留（用户切这一下通常正听着某个具体位置）。
+        """
+        if source not in PLAYBACK_SOURCES:
+            return
+        try:
+            from core.app_config import load_preferences, save_preferences
+            prefs = load_preferences()
+            prefs.playback.audio_source = source
+            save_preferences(prefs)
+        except Exception:  # noqa: BLE001
+            logger.debug("[ProjectController] 保存播放音轨偏好失败", exc_info=True)
+        self._reload_player_for_playback_source()
+
+    def _reload_player_for_playback_source(self) -> None:
+        """按当前偏好重算播放媒体并换轨（工程/媒体不在时静默返回）。"""
+        w = self._win
+        project = w._project
+        if project is None or not project.source_media_path:
+            return
+        source = Path(project.source_media_path)
+        if not source.is_file():
+            return
+        pref = self._playback_audio_source()
+        media = choose_playback_media(
+            source, project.audio_path, self._has_vocal_audio(project),
+            audio_source=pref,
+        )
+        self._reload_player_media(media)
+
+    def _reload_player_media(self, media: Path) -> None:
+        """换播放媒体，保住播放位置与播放态（切换音轨不该把用户弹回开头）。"""
+        w = self._win
+        try:
+            position = float(w.player.position() or 0.0)
+            playing = bool(w.player.is_playing())
+        except Exception:  # noqa: BLE001
+            position, playing = 0.0, False
+        try:
+            w.player.load(media, position=position, resume=playing)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[ProjectController] 切换播放音轨失败：%r", e)
+
+    def _sync_playback_source_control(self, project) -> None:
+        """把「播放音轨」控件的当前值与可用性同步到工程状态。
+
+        - 无人声轨 → 禁用（并说明去哪里提取）；
+        - 视频 → 禁用：画面只存在于原文件，换成人声轨就没有画面了（QMediaPlayer
+          单文件单轨，换轨只能换整个 source）。
+        """
+        w = self._win
+        player = getattr(w, "player", None)
+        sync = getattr(player, "set_audio_source_state", None)
+        if sync is None:
+            return
+        from subs.media_types import VIDEO_SUFFIXES
+        src = getattr(project, "source_media_path", "") if project is not None else ""
+        is_video = bool(src) and Path(str(src)).suffix.lower() in VIDEO_SUFFIXES
+        has_vocals = project is not None and self._has_vocal_audio(project)
+        try:
+            sync(
+                self._playback_audio_source(),
+                has_vocals=has_vocals,
+                is_video=is_video,
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("[ProjectController] 同步播放音轨控件失败", exc_info=True)
 
     def _start_media_prep(self, path: Path, *, do_vocals: bool, done_label: str, on_ready) -> None:
         """启动媒体准备 Worker（探测 / 提取 / 人声分离全部移出 UI 主线程）。"""
@@ -148,7 +245,10 @@ class ProjectController:
     def _finish_media_prep(self, path: Path, audio_path, info, vocal_extracted: bool) -> None:
         """媒体准备完成：载入播放器、构建工程、同步波形（打开媒体路径）。"""
         w = self._win
-        media_to_play = choose_playback_media(path, audio_path, vocal_extracted)
+        media_to_play = choose_playback_media(
+            path, audio_path, vocal_extracted,
+            audio_source=self._playback_audio_source(),
+        )
         try:
             w.player.load(media_to_play)
         except Exception as e:  # noqa: BLE001
@@ -254,7 +354,10 @@ class ProjectController:
         project = w._project
         if project is None:
             return
-        media_to_play = choose_playback_media(path, audio_path, vocal_extracted)
+        media_to_play = choose_playback_media(
+            path, audio_path, vocal_extracted,
+            audio_source=self._playback_audio_source(),
+        )
         try:
             w.player.load(media_to_play)
         except Exception as e:  # noqa: BLE001
@@ -293,7 +396,8 @@ class ProjectController:
         if not w._maybe_save_changes("打开新媒体将替换当前工程。"):
             return
 
-        # 人声分离决策（模态确认）在 UI 线程先完成；探测/提取/分离移出主线程。
+        # 人声分离决策在 UI 线程先完成（只读偏好 + 模型可用性，不弹窗）；
+        # 探测/提取/分离本身移出主线程。
         do_vocals = self._should_extract_vocals(p)
         self._start_media_prep(
             p,
@@ -559,8 +663,14 @@ class ProjectController:
         # 有可用媒体：载入播放器（同步轻量）；audio_path 缺失时后台修复（不阻塞打开）
         if media_ok:
             play_src = Path(media)
+            # 播放媒体按「播放音轨」偏好在原文件/人声轨之间选；缺 audio_path 时
+            # _has_vocal_audio 为假 → 必然回落原文件，不会指向不存在的路径。
+            play_media = choose_playback_media(
+                play_src, proj.audio_path, self._has_vocal_audio(proj),
+                audio_source=self._playback_audio_source(),
+            )
             try:
-                w.player.load(play_src)
+                w.player.load(play_media)
             except Exception as e:  # noqa: BLE001
                 logger.warning("[ProjectController] 工程媒体加载播放器失败：%r", e)
             if not proj.audio_path or not Path(proj.audio_path).is_file():
@@ -608,6 +718,10 @@ class ProjectController:
 
     def load_waveform_audio(self, project: SubtitleProject) -> None:
         w = self._win
+        # 所有「工程媒体状态变了」的路径（打开媒体/重关联/人声提取/打开工程/修复
+        # audio_path）最后都会走到这里，所以「播放音轨」控件的同步挂在这个**唯一**
+        # 咽喉点上，而不是散在各处（挂在这里也不用担心下面的提前 return 漏掉）。
+        self._sync_playback_source_control(project)
         if project is None or not project.audio_path:
             w.waveform.set_audio(None, 16000)
             return

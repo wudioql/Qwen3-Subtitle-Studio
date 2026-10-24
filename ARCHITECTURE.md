@@ -69,10 +69,10 @@ subs/ ──────────→ 标准库/其自身纯字幕模块
 
 ### 4.1 打开媒体
 
-1. `ProjectController` 接收媒体路径并询问可选的人声提取。
+1. `ProjectController` 接收媒体路径，按偏好决定是否分离人声（`extract_vocals` **默认开启**；只读偏好 + 模型可用性，**不弹窗追问**；模型不可用则静默跳过）。
 2. `MediaPrepWorker` 在后台探测原生音频；必要时调用 FFmpeg 生成 16 kHz mono WAV；可选调用 Kim_Vocal_2。
-3. 主线程收到 `prepared` 后创建/更新 `SubtitleProject`，播放器加载原媒体或音频试听源，波形读取音频。
-4. 视频始终优先播放原视频；提取 WAV 仅作为识别/对齐数据源。
+3. 主线程收到 `prepared` 后创建/更新 `SubtitleProject`，播放器加载 `choose_playback_media()` 选出的播放媒体，波形读取 `audio_path`。
+4. **播放媒体与数据源解耦**：波形 / ASR / 强制对齐恒吃 `audio_path`（人声提取开启时 = 人声轨）；播放媒体由 `prefs.playback.audio_source` 决定 —— `"original"`（默认）播原媒体，`"vocals"` 时**纯音频**改播人声轨；**视频始终播原文件**，故该下拉对视频禁用并说明「画面只存在于原文件」。播放器底部控制条右侧的「播放音轨」下拉可即时切换（不动 `audio_path`、不触发重新识别；位置与播放态沿用）。
 
 ### 4.2 ASR + 对齐
 

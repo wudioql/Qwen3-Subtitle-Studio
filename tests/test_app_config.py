@@ -67,6 +67,58 @@ def test_prefs_cache_isolated_copies_and_save_refresh(tmp_path):
     invalidate_preferences_cache()
 
 
+def test_extract_vocals_defaults_on(tmp_path):
+    """人声提取默认开启，且**旧配置缺该键**时也补齐为开启。
+
+    依据（AGENTS.md §3）：伴奏会拖长或提前截断 MMS-FA 的尾音边界，而生产把
+    ``audio_path`` 直接喂对齐器——默认关等于让普通用户默认拿到被伴奏污染的边界。
+    三条都要钉：① 类默认值；② 缺键补齐；③ **显式写 false 必须被尊重**（用户自己关的）。
+    """
+    from core.app_config import Preferences, invalidate_preferences_cache, load_preferences
+
+    assert Preferences().asr.extract_vocals is True
+
+    p = tmp_path / "prefs.json"
+    p.write_text('{"asr": {"source_language": "zh"}}', encoding="utf-8")
+    invalidate_preferences_cache()
+    assert load_preferences(p).asr.extract_vocals is True
+
+    p.write_text('{"asr": {"extract_vocals": false}}', encoding="utf-8")
+    invalidate_preferences_cache()
+    assert load_preferences(p).asr.extract_vocals is False
+    invalidate_preferences_cache()
+
+
+def test_playback_audio_source_defaults_to_original(tmp_path):
+    """播放音轨默认「原音频」，旧配置缺键补齐为原音频，显式 vocals 被尊重。
+
+    为什么默认必须是原音频：人声提取改成默认开启后，若播放器也跟着默认播人声轨，
+    导入 mp3 的用户会只听到人声、以为文件坏了（历史行为正是如此）。而识别/波形/
+    对齐用的是 ``project.audio_path``，**与这里无关**——两条链路解耦。
+    """
+    from core.app_config import Preferences, invalidate_preferences_cache, load_preferences
+    from core.constants import PLAYBACK_SOURCE_ORIGINAL, PLAYBACK_SOURCE_VOCALS
+
+    assert Preferences().playback.audio_source == PLAYBACK_SOURCE_ORIGINAL
+
+    p = tmp_path / "prefs.json"
+    p.write_text('{"asr": {"source_language": "zh"}}', encoding="utf-8")
+    invalidate_preferences_cache()
+    assert load_preferences(p).playback.audio_source == PLAYBACK_SOURCE_ORIGINAL
+
+    p.write_text('{"playback": {"audio_source": "vocals"}}', encoding="utf-8")
+    invalidate_preferences_cache()
+    assert load_preferences(p).playback.audio_source == PLAYBACK_SOURCE_VOCALS
+
+    # 未来新增的兄弟键必须保留（嵌套宽松反序列化不能因新增 playback 节而回退）
+    p.write_text('{"playback": {"audio_source": "vocals", "future": 7}}', encoding="utf-8")
+    invalidate_preferences_cache()
+    from core.app_config import save_preferences
+    save_preferences(load_preferences(p), p)
+    assert json.loads(p.read_text(encoding="utf-8"))["playback"]["future"] == 7
+    invalidate_preferences_cache()
+
+
 def test_prefs_cache_keyed_by_path_and_invalidate(tmp_path):
     from core.app_config import (
         Preferences,
