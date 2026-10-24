@@ -157,4 +157,6 @@ python main.py
 - `CHANGELOG.md`：历史变更和日期。
 - `AGENTS.md`：AI 红线与协作规则，不复制整套架构。
 
+审计状态词（`README.md` 的状态表与各处变更说明共用这三个词）：`verified-current` = 已验证且此后对应代码未变；`implemented-pending` = 已实现，但验证依赖门禁无法复现的外部条件（真实模型权重 / 用户自备 API Key / 目标机 GUI 交互），只做过局部探针；`unplanned` = 没有规划、排期或验收标准。
+
 同一事实只保留一个详细解释；其他文档使用短链接。历史迁移文件不再作为现役真源。

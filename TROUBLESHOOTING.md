@@ -105,8 +105,9 @@ ffmpeg -filters | findstr subtitles
 
 确认打开的是原始视频路径。项目设计中：
 
-- 视频始终用原视频播放；16 kHz WAV/人声 WAV 只服务识别和对齐；
-- 纯音频才可能使用分离后 WAV 试听；
+- 视频**始终加载原视频文件**（画面只存在于原文件）；16 kHz WAV / 人声 WAV 不参与画面，只服务识别、对齐，以及 mpv 后端的**外部音轨**试听；
+- 切到「人声轨」时声音由 mpv `audio-add` 挂到**同一个文件**上，画面、播放位置、字幕轨都不动；后端回退 Qt 时该下拉对视频禁用（见 §4）；
+- 纯音频才可能整个换成分离后的 WAV 播放；
 - 重新关联媒体后应由 ProjectController 重新准备音频并更新波形。
 
 ## 4. Qt 播放器与 libmpv
@@ -120,6 +121,15 @@ python -c "import mpv; p=mpv.MPV(); p.terminate(); print('mpv OK')"
 ```
 
 确认 DLL 在项目根或系统 PATH；不要在 GUI 线程直接调用 mpv。
+
+### 视频上「播放音轨」下拉是灰的、怎么点都点不动
+
+只有两种情况会禁用，tooltip 会写明是哪一种：
+
+- **回退到 Qt 后端**（上一节）：`QMediaPlayer` 单文件单轨，换人声轨只能换整个 source，视频会丢画面，故对视频禁用。libmpv 就绪后会自动解锁——可用性绑在 `PlayerPanel.audio_source_capability_changed` 上，不必重开媒体；
+- **当前媒体还没有人声轨**：先在工具栏点「人声提取」生成，再回来切。
+
+纯音频媒体走的是另一条路：偏好为「人声轨」且人声件存在时**整个换文件**播放（`choose_playback_media`），与视频的「只换音轨」不是同一条链路。
 
 ### 日志出现 `Failed setup for format d3d11`
 

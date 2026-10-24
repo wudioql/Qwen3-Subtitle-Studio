@@ -160,6 +160,7 @@ class MpvBackend:
         self._last_time_emit = 0.0
         self._subtitle_track_id: Optional[int] = None
         self._subtitle_path: Optional[Path] = None
+        self._vocals_track_id: Optional[int] = None
         self._subtitle_revision = 0
         self._closing = False
 
@@ -300,6 +301,8 @@ class MpvBackend:
             with self._state_lock:
                 self._position_cache = float(max(0.0, position))
                 self._duration_cache = 0.0
+                # loadfile 会丢弃所有外部音轨，缓存的 id 立即作废。
+                self._vocals_track_id = None
 
         return self._worker.submit("load", action, timeout=10.0, coalesce_key="load")
 
@@ -401,6 +404,60 @@ class MpvBackend:
         except Exception as exc:  # noqa: BLE001
             # 字幕轨已经替换成功；旧版 mpv 不支持该 flags 时不应触发后端回退。
             logger.debug("[mpv] 请求字幕当前帧重绘失败: %s", exc)
+
+    # ── 播放音轨（视频：只换音轨，不换文件）────────────────────────
+    @staticmethod
+    def _audio_tracks(player) -> list[dict]:
+        return [t for t in list(getattr(player, "track_list", None) or [])
+                if t.get("type") == "audio"]
+
+    @staticmethod
+    def _track_id_by_path(player, target: str):
+        for track in MpvBackend._audio_tracks(player):
+            if track.get("external-filename") == target:
+                try:
+                    return int(track.get("id"))
+                except (TypeError, ValueError):
+                    return None
+        return None
+
+    def set_audio_track(self, vocals_path: str | Path | None) -> bool:
+        """在**同一个文件**内切音轨：内建音轨 ↔ 外部人声轨（视频专用）。
+
+        ``vocals_path=None`` → 切回文件内建音轨。调用方**不再** ``load``，所以画面、
+        播放位置、字幕轨全部原样保留——视频上做 A/B 听感只能这样（换文件=丢画面，
+        见 ``choose_playback_media``）。实测要点：``audio-add <wav> select`` 挂上后
+        aid 直接指向它；切回内建轨只改 ``aid``、不 remove 外部轨（来回切不重复解码）。track-list 异步更新，故 ``_vocals_track_id`` 可先留空、下次按路径回填。
+        """
+        target = str(Path(vocals_path).resolve()) if vocals_path else None
+
+        def action(player) -> None:
+            audio = self._audio_tracks(player)
+            if target is None:
+                embedded = [t for t in audio if not t.get("external")]
+                try:
+                    player.aid = int(embedded[0]["id"]) if embedded else "auto"
+                except (KeyError, TypeError, ValueError):
+                    player.aid = "auto"
+                return
+            with self._state_lock:
+                cached = self._vocals_track_id
+            track_id = self._track_id_by_path(player, target)
+            if track_id is None and any(t.get("id") == cached for t in audio):
+                track_id = cached
+            if track_id is None:
+                player.command("audio-add", target, "select")
+                track_id = self._track_id_by_path(player, target)
+            if track_id is None:
+                return
+            player.aid = track_id
+            with self._state_lock:
+                self._vocals_track_id = track_id
+
+        return self._worker.submit(
+            "audio-track", action, timeout=5.0, fatal_on_error=False,
+            coalesce_key="audio-track",
+        )
 
     def _remove_subtitle_track(self, player) -> None:
         with self._state_lock:

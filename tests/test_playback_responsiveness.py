@@ -622,6 +622,49 @@ def test_audio_source_switch_reloads_only_playback_media(tmp_path):
         assert proj.audio_path == str(vocals), "数据源不得被播放偏好改写"
         assert win.project_ctrl._playback_audio_source() == PLAYBACK_SOURCE_VOCALS
 
+        # 视频 + Qt 回退后端（mpv 未就绪）：禁用 + 说明保画面
+        video = tmp_path / "clip.mp4"
+        video.write_bytes(b"mp4")
+        v_vocals = vocals_cache_path(video)
+        v_vocals.parent.mkdir(parents=True, exist_ok=True)
+        v_vocals.write_bytes(b"RIFF")
+        vproj = SubtitleProject(source_media_path=str(video), audio_path=str(v_vocals))
+        win._project = vproj
+        win.player._mpv_ready = False          # 固定后端能力，别让异步 mpv 就绪搅局
+        win.project_ctrl._sync_playback_source_control(vproj)
+        assert combo.isEnabled() is False
+        assert "画面" in combo.toolTip()
+
+        # 视频 + libmpv 就绪：**可用**，且切换只挂外部音轨、绝不 loadfile（丢画面）
+        class _FakeMpv:
+            failed = False
+
+            def __init__(self):
+                self.tracks = []
+
+            def set_audio_track(self, path):
+                self.tracks.append(path)
+                return True
+
+        fake = _FakeMpv()
+        real_mpv, real_ready = win.player._mpv, win.player._mpv_ready
+        win.player._mpv, win.player._mpv_ready = fake, True
+        try:
+            with patch.object(win.player, "load") as load:
+                win.project_ctrl._sync_playback_source_control(vproj)
+                assert combo.isEnabled() is True
+                assert "只换音轨" in combo.toolTip()
+                # 偏好此刻是「人声轨」→ 对账时已把外部轨挂上
+                assert Path(str(fake.tracks[-1])) == v_vocals
+
+                combo.setCurrentIndex(combo.findData(PLAYBACK_SOURCE_ORIGINAL))
+                QApplication.instance().processEvents()
+                load.assert_not_called()
+            assert fake.tracks[-1] is None, "切回原音频 = aid 指回内建轨，不是换文件"
+            assert vproj.audio_path == str(v_vocals), "视频切换同样不得改数据源"
+        finally:
+            win.player._mpv, win.player._mpv_ready = real_mpv, real_ready
+
         # 纯音频但没有（有效）人声轨 → 禁用并指向「人声提取」
         noproj = SubtitleProject(source_media_path=str(audio), audio_path=str(audio))
         win.project_ctrl._sync_playback_source_control(noproj)
@@ -629,6 +672,50 @@ def test_audio_source_switch_reloads_only_playback_media(tmp_path):
         assert "人声提取" in combo.toolTip()
     finally:
         win.close()
+
+
+def test_playback_source_control_unlocks_when_mpv_becomes_ready(tmp_path):
+    """mpv 异步就绪后必须回来解锁视频上的「播放音轨」下拉。
+
+    这是真实故障：控件只在 `load_waveform_audio` 同步一次，而 libmpv 就绪晚于
+    导入媒体——一次性同步会让控件**永久**停在禁用态（用户实测「不管啥情况都点不了」）。
+    """
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication(["test"])
+    from core.vocal_separator import vocals_cache_path
+    from ui.main_window import MainWindow
+
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"mp4")
+    vocals = vocals_cache_path(video)
+    vocals.parent.mkdir(parents=True, exist_ok=True)
+    vocals.write_bytes(b"RIFF")
+
+    win = MainWindow()
+    try:
+        combo = win.player._audio_src_combo
+        win.player._mpv_ready = False
+        win._project = SubtitleProject(
+            source_media_path=str(video), audio_path=str(vocals))
+        win.project_ctrl._sync_playback_source_control(win._project)
+        assert combo.isEnabled() is False, "前置条件：mpv 未就绪时视频不该可切"
+
+        class _FakeMpv:
+            failed = False
+
+            def set_audio_track(self, path):
+                return True
+
+        real_mpv = win.player._mpv
+        win.player._mpv, win.player._mpv_ready = _FakeMpv(), True
+        try:
+            win.player.audio_source_capability_changed.emit()   # 走真实信号连接
+            assert combo.isEnabled() is True, "就绪后要回来解锁，否则控件永久禁用"
+        finally:
+            win.player._mpv = real_mpv
+    finally:
+        win.close()
+
 
 
 if __name__ == "__main__":

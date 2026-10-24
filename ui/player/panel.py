@@ -57,6 +57,8 @@ class PlayerPanel(PlayerFocusSurfaceMixin, SubtitlePreviewMixin, QtPlaybackRunti
     # 播放音轨切换（"original" / "vocals"）：面板只发意图，换媒体与持久化由
     # ProjectController 做——面板不碰工程状态，也不需要知道人声轨在哪。
     audio_source_changed = Signal(str)
+    # 后端能力变化（libmpv 就绪/回退）：视频「只换音轨」的可用性要重算。
+    audio_source_capability_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -301,6 +303,7 @@ class PlayerPanel(PlayerFocusSurfaceMixin, SubtitlePreviewMixin, QtPlaybackRunti
         logger.info("[播放器] libmpv 真渲染后端已异步启用: %s", self._mpv.dll_path)
         if self._media_path is None:
             self._update_backend_label("libmpv/libass 已就绪，等待导入媒体")
+            self.audio_source_capability_changed.emit()
             return
         # 视频与纯音频都切到 mpv。纯音频由 force-window 提供空白 VO，字幕仍由
         # libass 真渲染；QMediaPlayer 只作为 mpv 不可用/超时后的回退。
@@ -317,6 +320,8 @@ class PlayerPanel(PlayerFocusSurfaceMixin, SubtitlePreviewMixin, QtPlaybackRunti
         self._rebuild_mpv_subtitle()
         if self._user_wants_play:
             self._mpv.play()
+        # 必须在末尾发：loadfile 已丢掉外部音轨，控制器要在此之后重新挂上。
+        self.audio_source_capability_changed.emit()
 
     def _on_mpv_failed(self, message: str) -> None:
         """GUI 线程 slot：初始化/命令超时或失败时立即回退 Qt，绝不等待 worker。"""
@@ -331,6 +336,7 @@ class PlayerPanel(PlayerFocusSurfaceMixin, SubtitlePreviewMixin, QtPlaybackRunti
         else:
             self._activate_backend("qt")
         self._update_backend_label()
+        self.audio_source_capability_changed.emit()   # 已无「只换音轨」能力
 
     def load(self, media_path: str | Path, *, position: float = 0.0,
              resume: bool = False) -> None:

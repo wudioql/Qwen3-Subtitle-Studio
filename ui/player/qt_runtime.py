@@ -280,22 +280,55 @@ class QtPlaybackRuntimeMixin:
             return PLAYBACK_SOURCE_ORIGINAL
         return str(self._audio_src_combo.currentData() or PLAYBACK_SOURCE_ORIGINAL)
 
-    def set_audio_source_state(self, source: str, *, has_vocals: bool, is_video: bool) -> None:
+    def can_switch_audio_track(self) -> bool:
+        """后端能否「只换音轨、不换文件」——只有 libmpv 就绪时成立。
+
+        Qt 的 QMediaPlayer 是单文件单轨，换人声轨只能换整个 source，画面就没了
+        （见 ``choose_playback_media``）。所以视频上的这个开关不是永远没意义，
+        而是**取决于后端能力**。
+
+        这里**只报后端能力**，不判断「当前媒体是不是视频」：那个判断属于工程状态，
+        由 ProjectController 结合 ``source_media_path`` 做。面板若也按自己加载过的
+        媒体判断，两边一旦不同步（例如刚导入还没 load 完）就会误报不可用。
+        """
+        backend = getattr(self, "_mpv", None)
+        return bool(
+            self._mpv_ready
+            and backend is not None
+            and not getattr(backend, "failed", False)
+        )
+
+    def set_audio_track(self, vocals_path) -> bool:
+        """只切音轨（``None`` = 回内建原音轨），画面与位置不动。
+
+        返回 ``False`` 表示**这次没能力原地切**（mpv 未就绪 / 入队失败），
+        调用方应退回「换播放媒体」的老路——绝不静默吞掉用户的切换意图。
+        """
+        if not self.can_switch_audio_track():
+            return False
+        try:
+            return bool(self._mpv.set_audio_track(vocals_path))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[播放器] 切换音轨失败: %r", e)
+            return False
+
+    def set_audio_source_state(self, source: str, *, has_vocals: bool, is_video: bool,
+                               video_can_switch: bool = False) -> None:
         """同步下拉的当前值与可用性（由 ProjectController 在工程媒体变化后调用）。
 
         禁用场景（都是「这个开关此刻没有意义」而不是出错）：
         - 还没有人声轨 → 提示去哪里提取；
-        - 视频 → 提示画面只存在于原文件。
+        - 视频且后端不支持原地换音轨 → 提示画面只存在于原文件。
           此时下拉**显示「原音频」而不是偏好值**：禁用状态下控件应当描述现实
           （此刻确实在播原文件），否则用户会看到「人声轨」却听着原音频。
-          偏好本身不动，换回纯音频媒体时仍按偏好来。
+          偏好本身不动，换回纯音频媒体/后端可用时仍按偏好来。
         """
         from core.constants import PLAYBACK_SOURCE_ORIGINAL
 
         combo = getattr(self, "_audio_src_combo", None)
         if combo is None:
             return
-        blocked = is_video
+        blocked = is_video and not video_can_switch
         shown = PLAYBACK_SOURCE_ORIGINAL if blocked else source
         i = combo.findData(shown)
         combo.blockSignals(True)
@@ -309,11 +342,17 @@ class QtPlaybackRuntimeMixin:
             combo.setEnabled(False)
             combo.setToolTip(
                 "当前媒体还没有人声轨。点工具栏「人声提取」后即可切到人声轨试听。"
+                if not is_video else
+                "当前视频还没有人声轨。点工具栏「人声提取」后即可只换音轨试听（画面保留）。"
             )
         else:
             combo.setEnabled(True)
             combo.setToolTip(
                 "播放音轨：原音频 = 你导入的文件（含伴奏）；人声轨 = 提取后的纯人声。\n"
+                "波形、识别与字级对齐始终使用人声轨，与这里无关。"
+                if not is_video else
+                "播放音轨：原音频 = 视频自带音轨；人声轨 = 提取后的纯人声。\n"
+                "视频只换音轨、画面与播放位置不动。\n"
                 "波形、识别与字级对齐始终使用人声轨，与这里无关。"
             )
 

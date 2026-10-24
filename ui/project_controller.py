@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
@@ -87,8 +87,9 @@ def choose_playback_media(
     ``core.constants.PLAYBACK_SOURCE_*``）：
 
     - 视频媒体 → **始终返回原文件**：QMediaPlayer 是单文件单轨，换成人声 wav 等于
-      丢掉画面（用户实测过：任何视频都显示「音频媒体·无画面」），故视频上不做
-      试听切换，播放音轨下拉对视频禁用并说明原因。
+      丢掉画面（用户实测过：任何视频都显示「音频媒体·无画面」）。想在视频上听人声轨
+      由 mpv 挂**外部音轨**实现——不换文件、只改 ``aid``，见
+      ``ui.player.mpv_backend.MpvBackend.set_audio_track``，本函数不参与。
     - 纯音频媒体 → ``"vocals"`` 且确有人声轨时播人声轨（试听分离效果）；
       否则播原文件（``soundfile`` 不能直读的音频格式 QMediaPlayer 也能播）。
     - 人声件标记为真但文件已被清理（``.temp`` 被清）→ 回退原文件。
@@ -181,11 +182,44 @@ class ProjectController:
         if not source.is_file():
             return
         pref = self._playback_audio_source()
+        if self._apply_video_audio_track(project, pref):
+            return
         media = choose_playback_media(
             source, project.audio_path, self._has_vocal_audio(project),
             audio_source=pref,
         )
         self._reload_player_media(media)
+
+    def _vocal_track_path(self, project) -> Optional[Path]:
+        """工程的人声轨路径（``audio_path`` 已由 ``_has_vocal_audio`` 验过命名合同）。"""
+        path = getattr(project, "audio_path", "") if project is not None else ""
+        return Path(str(path)) if path else None
+
+    def _apply_video_audio_track(self, project, source: str) -> bool:
+        """视频：只换音轨（画面/位置/播放态不动）。返回 True = 已就地处理。
+
+        换文件在视频上等于丢画面（``choose_playback_media`` 的注释），所以视频走
+        mpv 的外部音轨：``audio-add`` 挂人声轨、``aid`` 切回内建轨。后端不支持
+        （Qt 回退 / mpv 未就绪）时返回 False，由调用方走「换播放媒体」老路。
+        """
+        from subs.media_types import VIDEO_SUFFIXES
+
+        player = getattr(self._win, "player", None)
+        setter = getattr(player, "set_audio_track", None)
+        if setter is None or project is None:
+            return False
+        src = getattr(project, "source_media_path", "") or ""
+        if not src or Path(str(src)).suffix.lower() not in VIDEO_SUFFIXES:
+            return False
+        want = source == PLAYBACK_SOURCE_VOCALS
+        track = self._vocal_track_path(project) if want else None
+        if want and not self._has_vocal_audio(project):
+            track = None
+        try:
+            return bool(setter(track))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[ProjectController] 视频切换音轨失败：%r", e)
+            return False
 
     def _reload_player_media(self, media: Path) -> None:
         """换播放媒体，保住播放位置与播放态（切换音轨不该把用户弹回开头）。"""
@@ -200,12 +234,22 @@ class ProjectController:
         except Exception as e:  # noqa: BLE001
             logger.warning("[ProjectController] 切换播放音轨失败：%r", e)
 
+    def resync_playback_source_control(self) -> None:
+        """后端能力变化（libmpv 就绪 / 回退 Qt）后重算「播放音轨」控件。
+
+        视频上的「只换音轨」能力随 mpv 就绪才出现，启动初期就绪前若把控件锁死
+        就再也没有人回来解锁——这个入口就是那个回来的人（见 panel 的
+        ``audio_source_capability_changed``）。
+        """
+        self._sync_playback_source_control(getattr(self._win, "_project", None))
+
     def _sync_playback_source_control(self, project) -> None:
-        """把「播放音轨」控件的当前值与可用性同步到工程状态。
+        """把「播放音轨」控件的当前值、可用性，以及播放器的**实际音轨**对齐。
 
         - 无人声轨 → 禁用（并说明去哪里提取）；
-        - 视频 → 禁用：画面只存在于原文件，换成人声轨就没有画面了（QMediaPlayer
-          单文件单轨，换轨只能换整个 source）。
+        - 视频 + 后端不支持原地换轨（Qt 回退）→ 禁用：画面只存在于原文件；
+        - 视频 + mpv 就绪 → 可用，且这里顺带按偏好把外部人声轨挂上/摘下
+          （``loadfile`` 会丢弃外部音轨，所以每次媒体状态变化都要重新对账）。
         """
         w = self._win
         player = getattr(w, "player", None)
@@ -216,14 +260,22 @@ class ProjectController:
         src = getattr(project, "source_media_path", "") if project is not None else ""
         is_video = bool(src) and Path(str(src)).suffix.lower() in VIDEO_SUFFIXES
         has_vocals = project is not None and self._has_vocal_audio(project)
+        source = self._playback_audio_source()
+        can_switch_video = False
+        if is_video:
+            probe = getattr(player, "can_switch_audio_track", None)
+            can_switch_video = bool(probe()) if probe is not None else False
         try:
             sync(
-                self._playback_audio_source(),
+                source,
                 has_vocals=has_vocals,
                 is_video=is_video,
+                video_can_switch=can_switch_video,
             )
         except Exception:  # noqa: BLE001
             logger.debug("[ProjectController] 同步播放音轨控件失败", exc_info=True)
+        if is_video and can_switch_video:
+            self._apply_video_audio_track(project, source)
 
     def _start_media_prep(self, path: Path, *, do_vocals: bool, done_label: str, on_ready) -> None:
         """启动媒体准备 Worker（探测 / 提取 / 人声分离全部移出 UI 主线程）。"""

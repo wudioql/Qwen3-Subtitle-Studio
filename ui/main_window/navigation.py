@@ -21,6 +21,10 @@ class NavigationMixin:
         self.player.position_changed.connect(self._on_playback_moved)
         # 播放音轨（原音频 / 人声轨）：面板只发意图，换媒体 + 持久化在控制器里做。
         self.player.audio_source_changed.connect(self.project_ctrl.set_playback_audio_source)
+        # 后端能力变化（libmpv 就绪/回退）→ 视频上「只换音轨」是否可用要重算。
+        self.player.audio_source_capability_changed.connect(
+            self.project_ctrl.resync_playback_source_control
+        )
         self.waveform.playhead_seeked.connect(self._on_waveform_playhead_seek)
         self.waveform.click_seeked.connect(self._on_waveform_click_seek)
         self.editor.text_changed.connect(self._on_text_edited)

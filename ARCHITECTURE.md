@@ -72,7 +72,7 @@ subs/ ──────────→ 标准库/其自身纯字幕模块
 1. `ProjectController` 接收媒体路径，按偏好决定是否分离人声（`extract_vocals` **默认开启**；只读偏好 + 模型可用性，**不弹窗追问**；模型不可用则静默跳过）。
 2. `MediaPrepWorker` 在后台探测原生音频；必要时调用 FFmpeg 生成 16 kHz mono WAV；可选调用 Kim_Vocal_2。
 3. 主线程收到 `prepared` 后创建/更新 `SubtitleProject`，播放器加载 `choose_playback_media()` 选出的播放媒体，波形读取 `audio_path`。
-4. **播放媒体与数据源解耦**：波形 / ASR / 强制对齐恒吃 `audio_path`（人声提取开启时 = 人声轨）；播放媒体由 `prefs.playback.audio_source` 决定 —— `"original"`（默认）播原媒体，`"vocals"` 时**纯音频**改播人声轨；**视频始终播原文件**，故该下拉对视频禁用并说明「画面只存在于原文件」。播放器底部控制条右侧的「播放音轨」下拉可即时切换（不动 `audio_path`、不触发重新识别；位置与播放态沿用）。
+4. **播放媒体与数据源解耦**：波形 / ASR / 强制对齐恒吃 `audio_path`（人声提取开启时 = 人声轨）；播放媒体由 `prefs.playback.audio_source` 决定 —— `"original"`（默认）播原媒体，`"vocals"` 时**纯音频**改播人声轨；**视频从不换文件**，改由 mpv 外部音轨切声音（`MpvBackend.set_audio_track`：`audio-add` + `aid`，画面/位置/字幕轨不动），后端回退 Qt 时该下拉禁用并说明「画面只存在于原文件」。播放器底部控制条右侧的「播放音轨」下拉可即时切换（不动 `audio_path`、不触发重新识别；位置与播放态沿用）。视频的可切性取决于后端能力，故可用性绑在 `PlayerPanel.audio_source_capability_changed` 上重算，而不是只在打开媒体时算一次。
 
 ### 4.2 ASR + 对齐
 

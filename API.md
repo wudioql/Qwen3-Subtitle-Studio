@@ -181,6 +181,8 @@ sentences  指定 indices
 
 `PlayerPanel` 是 UI 内部的兼容 façade，保留 `set_project()`、`set_preview_time()`、`preview_mode()`、播放/暂停/停止和状态 Signal。它不是独立 GUI SDK；UI 私有字段和 Qt 控件层级不属于公共 API。包入口 `from ui.player import PlayerPanel, _VideoSubtitleStage` 的可用性属于现役测试约束（2026-10-05 由 `ui.player_panel` 收包而来），但以下划线名称不应被新代码依赖。
 
+播放音轨相关有**两个 Signal**（另有 `PlayerPanel` 上的两个能力方法），方向固定为「面板只发意图、控制器执行」：`audio_source_changed(str)`（用户选了 `original`/`vocals`）、`audio_source_capability_changed()`（后端能力变化，如 libmpv 异步就绪 / 回退 Qt）、以及 `PlayerPanel.can_switch_audio_track() -> bool`（**只**表示后端能否原地换音轨，不问媒体类型）与 `set_audio_track(vocals_path | None) -> bool`（`False` = 没能力，调用方须回退「换播放媒体」）。视频是否可切由 `ProjectController` 结合 `source_media_path` 判断。
+
 ## 6. 错误与版本
 
 - `ValueError`：工程 schema、导出前置条件、时间/字段合同或配置不合法。

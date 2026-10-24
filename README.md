@@ -20,17 +20,21 @@
 | 范围 | 状态 | 证据 / 边界 | 证据日期 |
 |---|---|---|---|
 | 源码语法与静态检查 | `verified-current` | 本机 `compileall` 通过；`ruff check .` 全绿 | 2026-10-07 |
-| 纯逻辑、字幕模型、导入导出 | `verified-current` | 本机 `pytest -q` = 378 passed / 0 failed（详见下方「测试基线」） | 2026-10-07 |
+| 纯逻辑、字幕模型、导入导出 | `verified-current` | 本机 `pytest -q` = 388 passed / 0 failed（详见下方「测试基线」） | 2026-10-24 |
 | 云端 ASR（SiliconFlow）后端 | `implemented-pending` | 取文本、计费账本、逐句语种判定均有单测；但真实 HTTP 调用依赖用户自备API Key，且不在 `e2e/` 与 pytest 套件内，门禁无法复现 | 2026-10-04 |
 | 本机完整 ASR/对齐 E2E | `verified-current` | 用户确认各功能均正常工作，且模型未变动，故行为与上次实测一致；根目录三件参考资源由本项目生成，属于链路自洽验证，不是独立数据集基准 | 2026-10-05 |
-| 本机 libmpv/libass | `verified-current` | 同上（用户确认；模型与播放链路未变动） | 2026-10-05 |
+| 本机 libmpv/libass | `verified-current` | 同上（用户确认渲染链；**2026-10-24 起播放音轨改走 mpv 外部音轨**，见下条） | 2026-10-05 |
+| 视频切「播放音轨」（mpv 外部音轨） | `implemented-pending` | 本机真 libmpv 探针通过：`audio-add` 后 `aid` 1→2 且媒体路径未变、切回 `aid` 1；GUI 点选待用户复验 | 2026-10-24 |
 | Aegisub / mpv.net 字幕兼容性 | `verified-current` | 同上（用户确认；字幕导出代码未变动） | 2026-10-05 |
 | PotPlayer 兼容性 | `verified-current` | 同上；除 `\kf` 无法逐字扫过、只能整字亮外，其余字幕均正常 | 2026-10-05 |
 | 硬字幕烧录、Nuitka 分发 | `unplanned` | 当前没有明确规划、排期、验收标准或对应 UI/分发产物 | — |
 
 ### 测试基线
 
-本机 `pytest -q` 于 2026-10-07 **全绿，378 passed / 0 failed**（较 2026-10-06 的 365 条 +13：
+本机 `pytest -q` 于 2026-10-24 **全绿，388 passed / 0 failed**（较 2026-10-07 的 378 净 +10：
+人声轨守卫、MMS 字级边界诊断通道、播放音轨切换三处新增，同时删掉 3 条已否决的实验用例）。
+
+2026-10-07 的基线是 378 passed / 0 failed（较 2026-10-06 的 365 条 +13：
 多语言全文重对齐「真实时间裁窗」回归 +3、逐句语种「日/韩→英」+2、人声轨守卫 +8）。
 
 此前唯一的失败 `test_toolbar.py::test_panel_shrink_layout` 已于 2026-10-05 定位并修复：

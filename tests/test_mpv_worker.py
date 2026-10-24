@@ -227,6 +227,88 @@ def test_content_edits_rebuild_current_qt_and_mpv_subtitle():
     ]
 
 
+class _FakeMpvPlayer:
+    """只实现 set_audio_track 用到的那一小片 mpv API。"""
+
+    def __init__(self, tracks):
+        self.track_list = tracks
+        self.aid = 1
+        self.commands = []
+
+    def command(self, *args):
+        self.commands.append(args)
+
+
+class _InlineWorker:
+    """把 ``submit`` 变成「立刻执行 + 记录入队参数」，让 action 可断言。"""
+
+    def __init__(self):
+        self.calls = []
+
+    def submit(self, name, action, *, timeout=3.0, fatal_on_error=True, coalesce_key=None):
+        self.calls.append({"name": name, "action": action, "fatal": fatal_on_error})
+        return True
+
+
+def _bare_backend():
+    """跳过后端构造（那要真的 libmpv + HWND），只装 action 依赖的状态。"""
+    from ui.player.mpv_backend import MpvBackend
+
+    backend = object.__new__(MpvBackend)
+    backend._state_lock = threading.Lock()
+    backend._vocals_track_id = None
+    backend._worker = _InlineWorker()
+    return backend
+
+
+def test_video_audio_track_switch_keeps_file_and_only_moves_aid(tmp_path):
+    """视频「只换音轨」：不许 loadfile（=丢画面），只动 aid / audio-add。
+
+    这条护栏对应真实故障：早先视频上的「播放音轨」下拉永远禁用，因为唯一实现是
+    换整个播放媒体。mpv 的外部音轨于是成了唯一能保画面的路径，它的行为必须钉住。
+    """
+    vocals = tmp_path / "vocals_song.wav"
+    vocals.write_bytes(b"RIFF")
+
+    # 1. 首次切人声轨：挂外部轨并 select
+    player = _FakeMpvPlayer([
+        {"type": "video", "id": 1, "external": False},
+        {"type": "audio", "id": 1, "external": False},
+    ])
+    backend = _bare_backend()
+    assert backend.set_audio_track(vocals) is True
+    backend._worker.calls[0]["action"](player)
+    assert player.commands == [("audio-add", str(vocals.resolve()), "select")]
+    assert backend._worker.calls[0]["fatal"] is False, "挂轨失败不得判后端致命"
+
+    # 2. 外部轨已在 track-list：只改 aid，不重复挂
+    player = _FakeMpvPlayer([
+        {"type": "audio", "id": 1, "external": False},
+        {"type": "audio", "id": 2, "external": True,
+         "external-filename": str(vocals.resolve())},
+    ])
+    backend = _bare_backend()
+    backend.set_audio_track(vocals)
+    backend._worker.calls[0]["action"](player)
+    assert player.aid == 2 and player.commands == []
+
+    # 3. 切回原音频：aid 指回内建音轨，外部轨不卸载（来回切不必重新解码）
+    backend.set_audio_track(None)
+    backend._worker.calls[1]["action"](player)
+    assert player.aid == 1 and player.commands == []
+
+    # 4. mpv 还没把 external-filename 填上时，用缓存 id 兜底
+    player = _FakeMpvPlayer([
+        {"type": "audio", "id": 1, "external": False},
+        {"type": "audio", "id": 2, "external": True},
+    ])
+    backend = _bare_backend()
+    backend._vocals_track_id = 2
+    backend.set_audio_track(vocals)
+    backend._worker.calls[0]["action"](player)
+    assert player.aid == 2 and player.commands == []
+
+
 def test_high_frequency_seek_keeps_only_latest_pending_value():
     ready = threading.Event()
     blocker_started = threading.Event()
