@@ -275,6 +275,7 @@ class MMSAligner:
         offset_sec: float = 0.0,
         tail_limit_sec: Optional[float] = None,
         word_languages: Optional[Sequence[str]] = None,
+        boundary_trace: Optional[Callable[[dict], None]] = None,
     ) -> List[WordTimestamp]:
         """对一段音频与文本执行标准 MMS-FA 强制对齐，返回 WordTimestamp 列表。
 
@@ -290,6 +291,12 @@ class MMSAligner:
         即可保持各句读音正确，无需按语言切音频。长度契约：应等于
         ``len(extract_pure_words(text))``；不足处逐词回落 ``language``；
         逐词语言为空串时同样回落。返回的 ``WordTimestamp.language`` 同步为该词语言。
+
+        boundary_trace：**默认关闭**的边界追踪钩子（MMS-FA 专用）。传入可调用对象后，
+        每个字处理完回调一次，参数是普通 dict（可直接 JSON 序列化）。仅用于诊断，
+        不影响返回值、不写工程 JSON、不额外计算 RMS/频谱特征（复用本次已算的
+        ``vocal_features``）。记录的是 **raw FA 结果**——merge / sanitize / seam
+        snap 等共用后处理尚未施加，两者差异需调用方自行对比。
         """
         # 1. 音频准备 (16kHz 单声道 float32)
         if isinstance(audio, (str, Path)):
@@ -360,10 +367,10 @@ class MMSAligner:
         # 4. Alex Graves 经典 2L+1 CTC Trellis Viterbi 解码
         path = _ctc_forced_align_canonical(log_probs, all_targets, blank_id=0)
 
-        # 5. 提取每个词的发音起始帧与元音起点，辅音完整包含 + 元音谐波平坦度追踪长拖音
+        # 5. 提取每个词的发音起始帧与尾音扫描锚点，辅音完整包含 + 谐波平坦度追踪长拖音
         num_words = len(words_raw)
         word_start_frames: List[int] = []
-        word_vowel_start_frames: List[int] = []
+        word_tail_scan_start_frames: List[int] = []
 
         prev_s = 0
         for s_tok, e_tok in word_token_ranges:
@@ -376,20 +383,23 @@ class MMSAligner:
                 s_f = prev_s
             word_start_frames.append(s_f)
 
-            # 词内元音起点：取该词最后 token (元音) 在 Viterbi 中的起点；若无则默认 s_f
+            # 尾音扫描锚点：默认取该词**最后 token** 在 Viterbi 中的起点；若无则默认 s_f。
+            # 注意：它**不保证**是语言学/声学上的元音起点（英文 sing、拼音 ang 等
+            # 末 token 都不是元音），只是「保守的后段锚」。用于尾音扫描起点、句尾
+            # 搜索上界与末字 onset 哨兵区间；不参与字头 start_time 计算。
             last_k = 2 * (e_tok - 1) + 1
             last_tok_frames = np.where(path == last_k)[0]
             if len(last_tok_frames) > 0:
-                s_vowel = int(last_tok_frames[0])
+                tail_scan_start = int(last_tok_frames[0])
             else:
-                s_vowel = s_f
-            word_vowel_start_frames.append(s_vowel)
+                tail_scan_start = s_f
+            word_tail_scan_start_frames.append(tail_scan_start)
 
             prev_s = s_f + 2
 
         # 末字拖音搜索上界（三个锚取交集，与裁剪窗长度解耦 → 重对齐幂等）：
         #   ① 调用方锚 tail_limit_sec（单句路径 = 下一句起点；无则音频末端）；
-        #   ② 元音起点 + MMS_TAIL_EXTEND_MAX（元音起点由 CTC Viterbi 按文本锚定，
+        #   ② 尾音扫描锚点 + MMS_TAIL_EXTEND_MAX（锚点由 CTC Viterbi 按文本锚定，
         #      重复重对齐收敛到同一位置；防呼吸声/混响被平坦度误判成发音态时无限延伸）；
         #   ③ CTC 异质发音峰哨兵：窗口内后句人声开口的第一帧（见
         #      _find_next_content_onset）。①② 防的是「无限吃」，③ 防的是
@@ -407,31 +417,45 @@ class MMSAligner:
         out_words: List[WordTimestamp] = []
         for i in range(num_words):
             s_f = word_start_frames[i]
-            s_vowel = word_vowel_start_frames[i]
+            tail_scan_start = word_tail_scan_start_frames[i]
+            onset: Optional[int] = None
+            bound_source = "next_word"
             if i + 1 < num_words:
                 next_s_f = word_start_frames[i + 1]
             else:
-                next_s_f = min(last_word_max_frame, s_vowel + _tail_extend_frames)
+                next_s_f = min(last_word_max_frame, tail_scan_start + _tail_extend_frames)
+                # 记录上界由谁决定（诊断用；不参与计算）：tail_limit 更紧 → 调用方锚，
+                # 否则 → 尾音前瞻常量；tail_limit_sec 为 None 时 last_word_max_frame
+                # 就是音频末端，单独标成 audio_end 以免和「显式传入的锚」混淆。
+                if last_word_max_frame <= tail_scan_start + _tail_extend_frames:
+                    bound_source = "audio_end" if tail_limit_sec is None else "tail_limit"
+                else:
+                    bound_source = "tail_extend"
                 # ③ 哨兵：末字自身 token 集（重触发豁免）之外的字符峰 = 新内容开口。
-                # 扫描区间与锚解耦：上界用「元音起点 + 前瞻」而非被锚截过的
+                # 扫描区间与锚解耦：上界用「尾音扫描锚点 + 前瞻」而非被锚截过的
                 # next_s_f——哨兵找的是音频里的内容边界，与用户把锚拖到哪无关。
                 # （锚若被拖进后句首字发音中段，被截的扫描区间会恰好把首字峰
                 #  挡在区间外 → 哨兵失明、衰减扫描器顶到锚 → 「特定区间才复现」
                 #  的吞首字。解耦后首字峰只要在窗内就必被检出。）
                 last_s_tok, last_e_tok = word_token_ranges[-1]
                 own_tokens = set(int(t) for t in all_targets[last_s_tok:last_e_tok])
-                scan_end = min(num_frames, s_vowel + _tail_extend_frames)
+                scan_end = min(num_frames, tail_scan_start + _tail_extend_frames)
                 onset = _find_next_content_onset(
-                    log_probs, s_vowel + 1, scan_end, own_tokens, blank_id=0,
+                    log_probs, tail_scan_start + 1, scan_end, own_tokens, blank_id=0,
                 )
                 if onset is not None:
-                    next_s_f = min(next_s_f, max(s_vowel + 2, onset))
+                    # 只有哨兵**实际收紧**上界才算它决定边界；锚本就更紧时
+                    # 仍归因于锚（诊断值必须能区分「谁在起作用」）。
+                    onset_bound = max(tail_scan_start + 2, onset)
+                    if onset_bound < next_s_f:
+                        next_s_f = onset_bound
+                        bound_source = "onset"
 
-            # 包含全部前置辅音 [s_f, s_vowel]，并从元音起点 s_vowel 向后结合频谱谐波平坦度追踪长拖音
-            e_f = _find_singing_vocal_end_frame(
-                audio_np, s_vowel, next_s_f, features=vocal_features,
+            # 包含全部前置辅音 [s_f, tail_scan_start]，并从锚点向后结合频谱谐波平坦度追踪长拖音
+            e_f_scan = _find_singing_vocal_end_frame(
+                audio_np, tail_scan_start, next_s_f, features=vocal_features,
             )
-            e_f = min(next_s_f, max(s_f + 2, e_f))
+            e_f = min(next_s_f, max(s_f + 2, e_f_scan))
 
             raw_s = offset_sec + s_f * _WAV2VEC2_STRIDE_SEC
             raw_e = offset_sec + e_f * _WAV2VEC2_STRIDE_SEC
@@ -446,6 +470,27 @@ class MMSAligner:
                 language=word_langs[i],
             ))
 
+            if boundary_trace is not None:
+                # 诊断记录：全部是本次循环已算出的量，不做任何额外推理或重算。
+                boundary_trace({
+                    "unit_index": i,
+                    "text": words_raw[i],
+                    "is_last": i == num_words - 1,
+                    "s_f": s_f,
+                    "tail_scan_start": tail_scan_start,
+                    "next_s_f": next_s_f,
+                    "e_f_scan": e_f_scan,
+                    "e_f": e_f,
+                    "start_time": s_time,
+                    "end_time": e_time,
+                    "onset": onset,
+                    "bound_source": bound_source,
+                    "capped_by_next": e_f_scan >= next_s_f,
+                    "reduced_by_next": e_f < e_f_scan,
+                    "raised_to_floor": e_f > e_f_scan,
+                    "last_word_max_frame": last_word_max_frame,
+                })
+
         return out_words
 
     def align_with_context(
@@ -459,6 +504,7 @@ class MMSAligner:
         offset_sec: float = 0.0,
         prev_language: Optional[str] = None,
         next_language: Optional[str] = None,
+        boundary_trace: Optional[Callable[[dict], None]] = None,
     ) -> List[WordTimestamp]:
         """上下文强制对齐：把 [prev_text, text, next_text] 拼成一段对齐，只返回 text 的词。
 
@@ -476,6 +522,10 @@ class MMSAligner:
         prev_language / next_language：邻句语言（可选）。仅用于让邻句 token 的
         罗马化读音（数字拼读 / 日语 pykakasi）用对语言——中英混排里英文邻句的
         数字不该按中文读法展开。缺省回落 ``language``，切片约定不受影响。
+
+        boundary_trace：透传给 ``align``。注意它记录的是**拼接后整段**的每个字
+        （prev + 本句 + next），不只是本句；本句对应 ``unit_index`` 落在
+        ``[prev_n, prev_n + cur_n)``。返回值仍只含本句。
         """
         prev_n = len(extract_pure_words(prev_text or ""))
         cur_n = len(extract_pure_words(text or ""))
@@ -488,7 +538,7 @@ class MMSAligner:
         )
         all_words = self.align(
             audio, full, language=language, offset_sec=offset_sec,
-            word_languages=word_langs,
+            word_languages=word_langs, boundary_trace=boundary_trace,
         )
         lo = min(prev_n, len(all_words))
         hi = min(prev_n + cur_n, len(all_words))

@@ -37,8 +37,10 @@ tools/        环境探针与判据自检脚本
 assets/       应用图标
 ```
 
-`tools/` 下有两种东西，别混：`env_check_native_api.py`（环境探针，发布前门禁）与
-`cloud_models_cli.py`（模型清单 CLI，真源在 `core/cloud_models.py`）是**长期驻留**工具；
+`tools/` 下有三种东西，别混：`env_check_native_api.py`（环境探针，发布前门禁）、
+`cloud_models_cli.py`（模型清单 CLI，真源在 `core/cloud_models.py`）与
+`mms_boundary_trace.py`（MMS 字级边界诊断：某个字的 end 为什么停在这里）是**长期驻留**工具——
+后者复现生产输入必须 `--audio vocals`（开启人声提取时对齐器吃人声轨，不是混音）；
 `check_ja_ko_en_split.py` 是**某条判据的回归判据**，改相关逻辑后可重跑确认未退化。
 一次性诊断用的临时探针**不要留在仓库**——结论固化进 `tests/` 护栏或提交说明后即删。
 

@@ -200,47 +200,52 @@ def _compute_vocal_features(
 
 def _find_singing_vocal_end_frame(
     audio_np: np.ndarray,
-    vowel_start_frame: int,
+    scan_anchor_frame: int,
     max_end_frame: int,
     frame_stride: int = _WAV2VEC2_STRIDE_SAMPLES,
     *,
     features: Optional[tuple[np.ndarray, np.ndarray]] = None,
 ) -> int:
-    """从元音起点向后结合语音频谱平坦度 (Spectral Flatness 谐波结构) 与局部能量，精确定位长元音的自然衰减结束点。
+    """从扫描锚点向后结合语音频谱平坦度 (Spectral Flatness 谐波结构) 与局部能量，定位长音的自然衰减结束点。
 
     - 辅音已在前置帧区间内完整保护；
-    - 从元音起点扫描：能量高于阈值且平坦度低（富含谐波共振峰）判定为歌唱元音发音态；
+    - 从锚点扫描：能量高于阈值且平坦度低（富含谐波共振峰）判定为歌唱发音态；
     - 遇到停顿/呼吸态（平坦度跳升且能量跌落持续 60ms），发音自然截断；
     - 严格在上界 max_end_frame 处截断，绝不跨越停顿侵入后句。
+
+    ``scan_anchor_frame`` 由调用方给出，语义是「保守的后段锚」而非语言学/声学
+    意义上的元音起点（MMS 路径传的是末 token 的 path 起点）。锚越晚 → 搜索区间
+    越晚结束、句尾上界越晚，对长拖音更保守；锚越早 → 早段能量跌落更容易导致
+    提前截断。改动锚点必须用真实样本验证，不能只以「更符合变量名」为依据。
     """
     total_samples = len(audio_np)
     num_frames = total_samples // frame_stride
     max_frame = min(num_frames, max_end_frame)
-    if vowel_start_frame >= max_frame:
+    if scan_anchor_frame >= max_frame:
         return max_frame
 
     flatness, rms = features if features is not None else _compute_vocal_features(
         audio_np, frame_stride,
     )
     n_f = min(len(flatness), len(rms), max_frame)
-    if n_f <= vowel_start_frame:
+    if n_f <= scan_anchor_frame:
         return max_frame
 
-    vocal_rms_peak = float(np.max(rms[vowel_start_frame:n_f])) if n_f > vowel_start_frame else 0.0
+    vocal_rms_peak = float(np.max(rms[scan_anchor_frame:n_f])) if n_f > scan_anchor_frame else 0.0
     if vocal_rms_peak < 1e-4:
-        return min(max_frame, vowel_start_frame + 2)
+        return min(max_frame, scan_anchor_frame + 2)
 
     rms_thresh = max(vocal_rms_peak * 0.12, 0.008)
 
-    end_f = vowel_start_frame + 2
-    for t in range(vowel_start_frame, n_f):
-        is_voiced = bool((rms[t] >= rms_thresh) and (flatness[t] < 0.22 or t <= vowel_start_frame + 6))
+    end_f = scan_anchor_frame + 2
+    for t in range(scan_anchor_frame, n_f):
+        is_voiced = bool((rms[t] >= rms_thresh) and (flatness[t] < 0.22 or t <= scan_anchor_frame + 6))
         if is_voiced:
             end_f = t + 1
         else:
             if t + 2 < n_f:
                 check_voiced = [
-                    bool((rms[k] >= rms_thresh) and (flatness[k] < 0.22 or k <= vowel_start_frame + 6))
+                    bool((rms[k] >= rms_thresh) and (flatness[k] < 0.22 or k <= scan_anchor_frame + 6))
                     for k in range(t, min(n_f, t + 3))
                 ]
                 if not any(check_voiced):
@@ -248,7 +253,7 @@ def _find_singing_vocal_end_frame(
             else:
                 break
 
-    return min(max_frame, max(vowel_start_frame + 2, end_f))
+    return min(max_frame, max(scan_anchor_frame + 2, end_f))
 
 
 __all__ = [

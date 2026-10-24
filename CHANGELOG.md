@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- **MMS-FA 字级边界诊断通道 + 只读诊断工具**。`MMSAligner.align` / `align_with_context` 新增默认 `None` 的 `boundary_trace` 逐字回调（记录 `s_f` / 尾音扫描锚点 `tail_scan_start` / 上界 `next_s_f` / 扫描终 `e_f_scan` / 哨兵 `onset` / 归因 `bound_source`），**全部复用本次循环已算出的量**，不重算 RMS 或频谱特征、不写工程 JSON，不传时零副作用（护栏钉住「传与不传返回值逐字段相同」）。新增 `tools/mms_boundary_trace.py`：按句打印边界表，`--audio mix|vocals` 选择喂给对齐器的音频源，`--win ctx|tight` 选择窗口策略，`--json` 落盘。
+- **上述改动不改变任何现役行为**：全曲 43 句 291 字，在混音与人声轨两种输入上，清理前后逐字 `start/end` **差异 0**。
+  **实测结论（2026-10-24，不采纳改动）**：尾音扫描锚点保持「词内末 token」。实验锚点（词内首个元音字母 token）在人声轨上只改变 3/291（ctx）与 5/291（tight）处边界，其中 2 处提前截断持续长音（最狠 580ms）、1 处把锚落在词首的长词整字塌成 40ms；而「A 被伴奏拖长」这个原始动机在喂人声轨时基本自行消失（tight 下实测某末字 A 已自然停在 14.200，与实验锚点一致）。**病根在输入侧（伴奏进了声学证据），不在锚点选择。**
+  同时修正一处方法论：在**混音**上判「争议段还有没有人声」只能证明「还有谐波能量」，谱平坦度 / 谐波占比 / 与字尾谱相似度三个判据对「人声 vs 伴奏残余」均无区分力——同一次 A/B 在混音上 8 处差异、人声轨上 3 处，混音版还把伴奏拖长误判成真发声。该规则已写入 `AGENTS.md §3`。
+
 ### Fixed
 
 - **任何容器媒体（mp4/mkv/mov/avi/webm/ts/flv/wmv/m4a/aac）导入后点「人声提取」都被误拦为「当前工程已在使用提取出的人声音轨，无需重复提取」**，按钮实际变成死键。根因是 `ui/project_controller.py::_has_vocal_audio` 用 `audio_path != source_media_path` 判定，而 `audio_path` 的语义是「已提取的 16kHz mono WAV」（`subs/models.py`）——它既可能是 FFmpeg 降采样提取件，也可能是人声分离产物，**路径不相等这一个条件分不出是哪一种**。容器媒体经 `prepare_audio()` 提取后 `audio_path` 必然 ≠ 源媒体，于是刚导入就被判成「已用人声轨」；原生可直读的 mp3/wav/flac 因不产生提取件（`audio_path` 保持等于源路径）反而正常，这正是「不是所有媒体都报错」的原因。该守卫与其 `extract_vocals_now` 一同在 e16e3d3 新加，**从未对容器媒体正确过**，且零测试覆盖。修法：判据改走人声缓存**命名合同**（新增 `core.vocal_separator.vocals_cache_path()` / `is_vocals_track_of()`，此前缀下沉为 `constants.VOCALS_CACHE_PREFIX` 唯一真源，`core/temp_cleanup.py` 的缓存名正则一并改为复用它、不再另写字面量）。新判据要求与「源媒体的人声缓存路径」**精确相等且文件仍在**，提取件名尾是 `__sr16000_ch1.wav`、人声件名尾是 `_{size}_{mtime}.wav`，即使源媒体自己叫 `vocals_*.mp4` 也不会串味；源媒体缺失、缓存被龄期清理、文件名对不上时一律放行（宁可重跑，不可误拦）。回归 `tests/test_vocal_track_guard.py`（8 条，含 UI 守卫层用例；经「回退到旧判据 → 5 条变红 → 恢复」验证非恒真）。

@@ -517,6 +517,129 @@ def test_vocal_features_precomputed_once_per_align():
     assert len(seen_features) == 3 and all(item is features for item in seen_features)
 
 
+# ═════════════ 默认关闭的边界追踪钩子（MMS 专用诊断） ═════════════
+# 契约：传 boundary_trace 不得改变返回值；记录必须来自本次已算出的量，
+# 不得重算 RMS/频谱特征；不传时零副作用。
+# 断言点选在「不传也一样」这一不变量上，避免用「有输出」冒充行为等价。
+
+def _fake_trace_aligner(rows, vocab, rom_map, *, tail_limit_sec=None, trace=None):
+    """跑一次 align，返回 (words, records)。log_probs 直接当 emissions（幂等）。"""
+    from core.mms_aligner import MMSAligner
+
+    T = len(rows)
+    log_probs = _mk_log_probs(rows)
+    aligner = MMSAligner(model_dir="/nonexistent")
+    audio = np.random.randn(T * 320).astype(np.float32) * 0.1
+    with patch.object(MMSAligner, "_generate_emissions_chunked", return_value=log_probs), \
+         patch.object(MMSAligner, "_load_vocab", return_value=vocab), \
+         patch.object(MMSAligner, "_romanize_word", side_effect=rom_map):
+        words = aligner.align(
+            (audio, 16000), " ".join(rom_map.words), language="Chinese",
+            offset_sec=0.0, tail_limit_sec=tail_limit_sec, boundary_trace=trace,
+        )
+    return words
+
+
+class _RomMap:
+    """把词映射成固定读音；.words 供拼接文本用（与 side_effect 同源）。"""
+
+    def __init__(self, mapping):
+        self.mapping = mapping
+        self.words = list(mapping)
+
+    def __call__(self, word, *_a, **_kw):
+        return self.mapping[word]
+
+
+def test_boundary_trace_absent_changes_nothing():
+    """同一场景跑两次（一次带钩子、一次不带），WordTimestamp 必须逐字段相同。"""
+    rows = [(BLANK, 0.9)] * 10 + [(VOWEL_A, 0.9)] * 5 + [(BLANK, 0.9)] * 45
+    rom = _RomMap({"拖": "a"})
+
+    plain = _fake_trace_aligner(rows, {"a": VOWEL_A}, rom)
+    seen = []
+    traced = _fake_trace_aligner(rows, {"a": VOWEL_A}, rom, trace=seen.append)
+
+    assert [(w.text, w.start_time, w.end_time) for w in plain] \
+        == [(w.text, w.start_time, w.end_time) for w in traced]
+    assert len(seen) == len(traced) == 1
+    # 记录里的时间就是返回值的时间（同一次计算，不是第二次推理）
+    assert seen[0]["start_time"] == traced[0].start_time
+    assert seen[0]["end_time"] == traced[0].end_time
+
+
+def test_boundary_trace_reuses_vocal_features():
+    """开钩子不得让 RMS/频谱特征多算一遍。"""
+    from core.mms_aligner import MMSAligner
+
+    T = 60
+    emissions = np.zeros((T, 31), dtype=np.float32)
+    path = np.zeros(T, dtype=np.int64)
+    path[10:15] = 1
+    path[20:25] = 3
+    features = (np.zeros(T, dtype=np.float32), np.ones(T, dtype=np.float32))
+
+    aligner = MMSAligner(model_dir="/nonexistent")
+    with patch.object(MMSAligner, "_generate_emissions_chunked", return_value=emissions), \
+         patch.object(MMSAligner, "_load_vocab", return_value={"a": 4}), \
+         patch.object(MMSAligner, "_romanize_word", return_value="a"), \
+         patch("core.mms_aligner.engine._ctc_forced_align_canonical", return_value=path), \
+         patch("core.mms_aligner.engine._compute_vocal_features", return_value=features) as compute:
+        aligner.align(
+            (np.zeros(T * 320, dtype=np.float32), 16000), "a b c",
+            language="English", boundary_trace=lambda _r: None,
+        )
+
+    assert compute.call_count == 1
+
+
+def test_boundary_trace_bound_source_middle_vs_last():
+    """句中字上界 = 下一字起点；末字在无 tail_limit 时上界 = 音频末端。"""
+    T = 60
+    rows = [(BLANK, 0.9)] * T
+    for t in range(10, 15):
+        rows[t] = (VOWEL_A, 0.9)
+    for t in range(40, 50):
+        rows[t] = (CHAR_N, 0.9)
+    rom = _RomMap({"拖": "a", "拉": "n"})
+    seen = []
+    _fake_trace_aligner(rows, {"a": VOWEL_A, "n": CHAR_N}, rom, trace=seen.append)
+
+    assert [r["bound_source"] for r in seen] == ["next_word", "audio_end"]
+    # 句中字的上界必须正是下一字的 s_f，不是估算
+    assert seen[0]["next_s_f"] == seen[1]["s_f"]
+    assert seen[1]["is_last"] is True and seen[0]["is_last"] is False
+
+
+def test_boundary_trace_reports_onset_cut_and_tail_limit():
+    """连唱被哨兵截住 → bound_source="onset"；锚更紧时 → "tail_limit"。"""
+    T = 100
+    rows = [(BLANK, 0.9)] * T
+    for t in range(10, 15):
+        rows[t] = (VOWEL_A, 0.9)
+    for t in range(41, T):
+        rows[t] = (CHAR_N, 0.9)
+    rom = _RomMap({"拖": "a"})
+
+    seen = []
+    _fake_trace_aligner(rows, {"a": VOWEL_A}, rom,
+                        tail_limit_sec=90 * 0.020, trace=seen.append)
+    r = seen[0]
+    assert r["bound_source"] == "onset", "哨兵收紧上界时必须归因给 onset"
+    assert r["onset"] is not None and r["onset"] <= 43
+    # 哨兵确实**收紧**了上界：结果比「锚 + 前瞻」允许的 90 帧明显更早
+    assert r["next_s_f"] <= 43 and r["next_s_f"] < 90
+    # 尾音扫描绝不越界（这是 align() 的硬不变量，与锚/哨兵由谁决定无关）
+    assert r["e_f_scan"] <= r["next_s_f"] and r["e_f"] <= r["next_s_f"]
+
+    # 锚提前到哨兵之前 → 上界改由调用方锚决定（不再归因于 onset）
+    seen2 = []
+    _fake_trace_aligner(rows, {"a": VOWEL_A}, rom,
+                        tail_limit_sec=20 * 0.020, trace=seen2.append)
+    assert seen2[0]["bound_source"] == "tail_limit"
+    assert seen2[0]["next_s_f"] <= 21
+
+
 # ═════════════════════════════════════════════════════════════
 # D. 数字拼读展开（原 test_digit_spelling.py）
 # ═════════════════════════════════════════════════════════════

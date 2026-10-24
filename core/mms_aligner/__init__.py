@@ -2,7 +2,7 @@
 
 子模块：
     constants  帧步长 / 词表 / 分块 / 哨兵阈值
-    ctc        Trellis Viterbi / 末字哨兵 / 元音终点
+    ctc        Trellis Viterbi / 末字哨兵 / 尾音扫描终点
     romanize   数字拼读表 / 汉字判定
     engine     MMSAligner + get_mms_aligner 单例
 
